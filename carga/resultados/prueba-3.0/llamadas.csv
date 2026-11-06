@@ -1,0 +1,5 @@
+﻿id,created_at,task_id,task,outcome,store_id,endpoint,model,prompt_tokens,cached_tokens,completion_tokens,cost_ticks,cost_estimated,latency_ms,ok
+13,2026-11-06T16:39:00.400235+00:00,r2-U00001,carga,exito,1,chat,grok-4.20-0309-non-reasoning,1528,1408,27,4991000,False,2114,True
+14,2026-11-06T16:39:02.330115+00:00,r2-U00002,carga,exito,2,chat,grok-4.20-0309-non-reasoning,1531,1408,34,5203500,False,689,True
+15,2026-11-06T16:39:02.330115+00:00,r2-U00002,carga,exito,2,chat,grok-4.20-0309-non-reasoning,1631,128,29,19768500,False,825,True
+16,2026-11-06T16:39:03.558724+00:00,r2-U00003,carga,exito,2,chat,grok-4.20-0309-non-reasoning,1535,128,35,18718500,False,917,True

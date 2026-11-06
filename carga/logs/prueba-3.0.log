@@ -1,0 +1,4 @@
+2026-11-06 11:38:57,569 INFO __main__: Corrida «prueba-3.0»: 3 unidades, una cada 1.0 s, modelo grok-4.20-0309-non-reasoning. Bitácora de texto en carga\logs\prueba-3.0.log
+2026-11-06 11:39:00,417 INFO carga: U00001 exito   conversacion | buenos días 
+2026-11-06 11:39:02,412 INFO carga: U00002 exito   venta | se fueron tres lavaloza 
+2026-11-06 11:39:03,566 INFO carga: U00003 exito   venta_dificil | vendí una docena de huevos sueltos 

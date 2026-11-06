@@ -235,7 +235,9 @@ class Worker:
         usage_task_id = f"r{self.run_id}-{task.unit_id}"[:32]
         started_at = datetime.now(UTC)
         started = time.perf_counter()
-        with track_task(usage_task_id, store_id=self.store_ids[task.store_index]) as usage:
+        with track_task("carga", store_id=self.store_ids[task.store_index]) as usage:
+            # En llm_usage cada llamada queda atada a su unidad: task_id = r<corrida>-<unidad>.
+            usage.task_id = usage_task_id
             outcome = await self._attempts(task)
         latency_ms = int((time.perf_counter() - started) * 1000)
         usage.outcome = outcome.status

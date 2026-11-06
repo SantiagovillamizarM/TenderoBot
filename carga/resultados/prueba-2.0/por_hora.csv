@@ -1,0 +1,2 @@
+﻿hora,desde_colombia,unidades,exito,fallo,error,tasa_exito,llamadas,tokens_entrada,tokens_cache,tokens_salida,porcentaje_cache,costo_usd,costo_por_unidad_usd,costo_por_exito_usd,reintentos,segundos_p50,segundos_p95
+0,2026-11-06 11:27,7,7,0,0,1.0,12,18947,13184,287,0.6958357523618515,0.01055805,0.001508292857142857,0.001508292857142857,0,1.688,2.754

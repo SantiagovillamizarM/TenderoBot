@@ -1,0 +1,3 @@
+﻿id,at,done,pending,success,failed,errors,cost_ticks,note
+3,2026-11-06T16:38:57.915456+00:00,0,3,0,0,0,0,inicio
+4,2026-11-06T16:39:03.596755+00:00,3,0,3,0,0,48681500,fin: terminada
