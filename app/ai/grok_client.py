@@ -7,6 +7,7 @@ Grok solo extrae datos: voz, texto o foto → JSON. Ningún cálculo se hace aqu
 
 import base64
 import json
+import time
 from typing import Any
 
 import httpx
@@ -20,6 +21,7 @@ from app.ai.prompts import (
     sales_prompt,
     stock_prompt,
 )
+from app.ai.usage import call_from_response, record
 from app.config import get_settings
 from app.schemas import OrderChange, SaleLine, StockLine
 
@@ -58,6 +60,22 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+async def _post(endpoint: str, path: str, model: str, **kwargs: Any) -> dict:
+    """POST a la pasarela que deja la llamada en la bitácora de consumo (también si falla)."""
+    started = time.perf_counter()
+    body: dict | None = None
+    ok = False
+    try:
+        response = await _get_client().post(path, **kwargs)
+        response.raise_for_status()
+        body = response.json()
+        ok = True
+        return body
+    finally:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        record(call_from_response(endpoint, model, body, latency_ms, ok=ok))
+
+
 def _blank_to_none(value: str | None) -> str | None:
     if value is None:
         return None
@@ -79,8 +97,10 @@ def _normalize_stock_lines(lines: list[StockLine]) -> list[StockLine]:
 async def _chat_completion(content: Any, response_schema: dict, schema_name: str) -> str:
     """Una llamada a Grok. Devuelve el texto de la respuesta (debería ser JSON)."""
     settings = get_settings()
-    response = await _get_client().post(
+    body = await _post(
+        "chat",
         "/chat/completions",
+        settings.grok_model,
         json={
             "model": settings.grok_model,
             "temperature": 0,
@@ -91,8 +111,7 @@ async def _chat_completion(content: Any, response_schema: dict, schema_name: str
             },
         },
     )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"].get("content") or ""
+    return body["choices"][0]["message"].get("content") or ""
 
 
 async def chat_with_tools(messages: list[dict], tools: list[dict]) -> tuple[dict, dict]:
@@ -101,8 +120,10 @@ async def chat_with_tools(messages: list[dict], tools: list[dict]) -> tuple[dict
     Devuelve el mensaje del asistente y el uso de tokens que reporta la pasarela.
     """
     settings = get_settings()
-    response = await _get_client().post(
+    body = await _post(
+        "chat",
         "/chat/completions",
+        settings.grok_model,
         json={
             "model": settings.grok_model,
             "temperature": 0,
@@ -111,21 +132,20 @@ async def chat_with_tools(messages: list[dict], tools: list[dict]) -> tuple[dict
             "tool_choice": "auto",
         },
     )
-    response.raise_for_status()
-    body = response.json()
     return body["choices"][0]["message"], body.get("usage") or {}
 
 
 async def transcribe_audio(audio_bytes: bytes, mime_type: str) -> str:
     """Voz → texto con el endpoint /stt. El audio no se guarda en ningún lado."""
     extension = "ogg" if "ogg" in mime_type else mime_type.rsplit("/", 1)[-1]
-    response = await _get_client().post(
+    body = await _post(
+        "stt",
         "/stt",
+        "stt",
         files={"file": (f"voice.{extension}", audio_bytes, mime_type)},
         data={"language": "es"},
     )
-    response.raise_for_status()
-    return str(response.json().get("text") or "").strip()
+    return str(body.get("text") or "").strip()
 
 
 async def _generate_json(content: Any, response_schema: dict, schema_name: str) -> dict:

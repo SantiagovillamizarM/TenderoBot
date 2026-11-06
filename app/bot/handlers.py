@@ -53,6 +53,7 @@ from app.models import (
 from app.onboarding import request_page_url
 from app.phones import normalize_phone
 from app.schemas import OrderChange, SaleLine, StockLine
+from app.usage_log import logged_task, set_task_info
 
 RATE_LIMIT_MAX = 20
 RATE_LIMIT_WINDOW_SECONDS = 60.0
@@ -630,16 +631,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         store = await require_ready_store(update, session)
         if store is None:
             return
+        store_id = store.id
     audio_bytes = await _download_file(context, voice.file_id)
-    try:
-        transcript = await transcribe_audio(audio_bytes, voice.mime_type or "audio/ogg")
-    except Exception:
-        logger.warning("No se pudo transcribir el audio")
-        transcript = ""
-    if not transcript:
-        await _reply(update, texts.AI_FAIL)
-        return
-    await route_text(update, transcript, "voice")
+    async with logged_task("voz"):
+        set_task_info(store_id=store_id)
+        try:
+            transcript = await transcribe_audio(audio_bytes, voice.mime_type or "audio/ogg")
+        except Exception:
+            logger.warning("No se pudo transcribir el audio")
+            transcript = ""
+        if not transcript:
+            set_task_info(outcome="no_entendido")
+            await _reply(update, texts.AI_FAIL)
+            return
+        await route_text(update, transcript, "voice")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -663,13 +668,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _reply(update, texts.PHOTO_TOO_BIG)
         return
     note = (message.caption or "").strip()
-    try:
-        lines = await extract_stock(catalog, image_bytes, "image/jpeg", note=note)
-    except ExtractError as exc:
-        await _reply(update, exc.user_message)
-        return
-    lines = match_stock_lines(lines, catalog)
-    await save_and_show_stock(update, store_id, lines, names)
+    async with logged_task("foto"):
+        set_task_info(store_id=store_id)
+        try:
+            lines = await extract_stock(catalog, image_bytes, "image/jpeg", note=note)
+        except ExtractError as exc:
+            set_task_info(outcome="no_entendido")
+            await _reply(update, exc.user_message)
+            return
+        lines = match_stock_lines(lines, catalog)
+        set_task_info(outcome="conteo" if lines else "sin_resultado")
+        await save_and_show_stock(update, store_id, lines, names)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -679,7 +688,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = (message.text or "").strip()
     if not text:
         return
-    await route_text(update, text, "text")
+    async with logged_task("texto"):
+        await route_text(update, text, "text")
     raise ApplicationHandlerStop
 
 
@@ -691,6 +701,7 @@ async def route_text(update: Update, text: str, source: str) -> None:
         if store is None:
             return
         store_id = store.id
+        set_task_info(store_id=store_id)
         products = await load_active_products(session, store.distributor_id)
         catalog = products_as_catalog(products)
         names = names_by_sku(products)
@@ -732,7 +743,9 @@ async def route_text(update: Update, text: str, source: str) -> None:
         return
 
     # Respaldo sin agente: extracción directa (si el agente está apagado o Grok falló antes de responder).
+    set_task_info(outcome="respaldo")
     if order_payload is not None and await apply_order_message(update, store_id, text, products, order_payload):
+        set_task_info(outcome="respaldo_pedido")
         return
 
     # Todo texto va a Grok: el tendero no tiene que decir "vendí" para registrar una venta.
@@ -742,6 +755,7 @@ async def route_text(update: Update, text: str, source: str) -> None:
         await _reply(update, exc.user_message)
         return
     lines = match_sale_lines(lines, catalog)
+    set_task_info(outcome="respaldo_ventas" if lines else "respaldo")
     await save_and_show_sales(update, store_id, lines, source, names)
 
 
@@ -948,6 +962,19 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
     )
 
 
+def agent_outcome(result: AgentResult | None, shown: dict[str, BotMessage]) -> str:
+    """Qué terminó haciendo el agente, para la bitácora de consumo."""
+    if KIND_SALES in shown:
+        return "ventas"
+    if KIND_ORDER in shown:
+        return "pedido"
+    if result is None:
+        return "error"
+    if not result.finished:
+        return "sin_terminar"
+    return "consulta" if result.tool_calls else "conversacion"
+
+
 async def answer_with_agent(
     update: Update, store_id: int, distributor_id: int, text: str, source: str, products: list[Product]
 ) -> bool:
@@ -961,6 +988,7 @@ async def answer_with_agent(
         result = None
         if not shown:
             return False
+    set_task_info(outcome=agent_outcome(result, shown))
     reply = result.reply if result is not None else ""
     if reply:
         await _reply(update, reply)

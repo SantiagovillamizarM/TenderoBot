@@ -426,3 +426,30 @@ class PendingAction(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     store: Mapped[Store] = relationship(back_populates="pending_actions")
+
+
+class LlmUsage(Base):
+    """Bitácora de consumo: una fila por llamada a Grok (chat o transcripción).
+
+    `task_id` agrupa las llamadas de un mismo mensaje del tendero para sacar el costo por tarea.
+    Solo números: nunca el texto del tendero ni la respuesta del modelo.
+    """
+
+    __tablename__ = "llm_usage"
+    __table_args__ = (Index("ix_llm_usage_created", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    task_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    task: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id", ondelete="SET NULL"), nullable=True)
+    endpoint: Mapped[str] = mapped_column(String(16), nullable=False)
+    model: Mapped[str] = mapped_column(String(80), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cached_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_ticks: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cost_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
