@@ -1,7 +1,9 @@
 import logging
+import math
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from time import monotonic
 
@@ -19,6 +21,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.ai.agent import AgentResult, run_agent
 from app.ai.grok_client import (
     ExtractError,
     extract_order_changes,
@@ -27,7 +30,10 @@ from app.ai.grok_client import (
     transcribe_audio,
 )
 from app.ai.matching import best_product_match, match_order_changes, match_sale_lines, match_stock_lines
+from app.ai.prompts import AGENT_SYSTEM_PROMPT
+from app.ai.tools import StoreActions, build_tools
 from app.bot import keyboards, texts
+from app.config import get_settings
 from app.db import SessionLocal
 from app.inventory.engine import delivery_schedule, load_store_analysis, parse_visit_weekdays
 from app.inventory.orders import apply_order_changes, cap_to_available, order_total, to_order_lines
@@ -46,7 +52,7 @@ from app.models import (
 )
 from app.onboarding import request_page_url
 from app.phones import normalize_phone
-from app.schemas import SaleLine, StockLine
+from app.schemas import OrderChange, SaleLine, StockLine
 
 RATE_LIMIT_MAX = 20
 RATE_LIMIT_WINDOW_SECONDS = 60.0
@@ -720,7 +726,12 @@ async def route_text(update: Update, text: str, source: str) -> None:
                 return
         pending_order = await get_pending(session, store.id, KIND_ORDER)
         order_payload = dict(pending_order.payload) if pending_order is not None else None
+        distributor_id = store.distributor_id
 
+    if get_settings().agent_enabled and await answer_with_agent(update, store_id, distributor_id, text, source, products):
+        return
+
+    # Respaldo sin agente: extracción directa (si el agente está apagado o Grok falló antes de responder).
     if order_payload is not None and await apply_order_message(update, store_id, text, products, order_payload):
         return
 
@@ -752,30 +763,211 @@ async def apply_order_message(
     if not changes:
         return False
     changes = match_order_changes(changes, catalog)
-    result = apply_order_changes(list(payload.get("lines") or []), changes, products_by_sku(products))
-    capped = cap_to_available(result.lines, by_id)
+    message, _info = await change_open_order(store_id, changes, products)
+    await _reply(update, message.text, reply_markup=message.markup)
+    return True
+
+
+@dataclass
+class BotMessage:
+    text: str
+    markup: object | None = None
+
+
+async def change_open_order(
+    store_id: int, changes: list[OrderChange], products: list[Product]
+) -> tuple[BotMessage, dict]:
+    """Aplica cambios al pedido abierto. Devuelve el mensaje con botones y un resumen para el agente."""
+    by_id = {product.id: product for product in products}
     async with session_scope() as session:
         pending = await get_pending(session, store_id, KIND_ORDER)
         if pending is None:
-            await _reply(update, texts.NOTHING_PENDING)
-            return True
+            return BotMessage(texts.NOTHING_PENDING), {
+                "error": "No hay un pedido abierto. Arma uno primero con armar_pedido."
+            }
+        payload = dict(pending.payload)
+        result = apply_order_changes(list(payload.get("lines") or []), changes, products_by_sku(products))
+        capped = cap_to_available(result.lines, by_id)
         pending = await replace_pending(
-            session, store_id, KIND_ORDER, {**pending.payload, "lines": capped.lines}, ttl=ORDER_PENDING_TTL
+            session, store_id, KIND_ORDER, {**payload, "lines": capped.lines}, ttl=ORDER_PENDING_TTL
         )
         pending_id = pending.id
     lines = to_order_lines(capped.lines, by_id)
-    await _reply(
-        update,
+    total = order_total(lines)
+    message = BotMessage(
         texts.order_draft(
             lines,
-            order_total(lines),
+            total,
             date.fromisoformat(payload["delivery_date"]),
             datetime.fromisoformat(payload["order_deadline"]),
             result.not_found,
             capped.not_found,
         ),
-        reply_markup=keyboards.order_keyboard(pending_id),
+        keyboards.order_keyboard(pending_id),
     )
+    return message, {
+        "borrador": "actualizado",
+        "productos": len(lines),
+        "total_pesos": int(total),
+        "no_encontrados": result.not_found,
+        "recortados_por_disponibilidad": capped.not_found,
+        "nota": "El tendero lo envía con el botón del pedido.",
+    }
+
+
+async def prepare_order(session: AsyncSession, store) -> tuple[BotMessage, dict] | None:
+    """Pedido sugerido para la próxima entrega, guardado como borrador. None si no hay tienda."""
+    analysis = await load_store_analysis(session, store.id)
+    if analysis is None:
+        return None
+    if await order_sent_for(session, store.id, analysis.next_delivery):
+        return BotMessage(texts.order_already_sent(analysis.next_delivery)), {
+            "ya_enviado": analysis.next_delivery.isoformat()
+        }
+    by_id = {p.id: p for p in await load_active_products(session, store.distributor_id)}
+    capped = cap_to_available(
+        [{"product_id": line.product_id, "cases": line.cases, "reason": line.reason} for line in analysis.order_lines],
+        by_id,
+    )
+    pending = await replace_pending(
+        session,
+        store.id,
+        KIND_ORDER,
+        {
+            "lines": capped.lines,
+            "delivery_date": analysis.next_delivery.isoformat(),
+            "order_deadline": analysis.order_deadline.isoformat(),
+        },
+        ttl=ORDER_PENDING_TTL,
+    )
+    lines = to_order_lines(capped.lines, by_id)
+    total = order_total(lines)
+    message = BotMessage(
+        texts.order_draft(
+            lines, total, analysis.next_delivery, analysis.order_deadline, availability_notes=capped.not_found
+        ),
+        keyboards.order_keyboard(pending.id),
+    )
+    return message, {
+        "borrador": "creado",
+        "entrega": texts.day_label(analysis.next_delivery),
+        "hora_limite": texts.deadline_label(analysis.order_deadline),
+        "productos": len(lines),
+        "total_pesos": int(total),
+        "nota": "El tendero lo revisa y lo envía con el botón del pedido.",
+    }
+
+
+def agent_catalog(products: list[Product]) -> list[dict]:
+    return [
+        {
+            **item,
+            "unit_price": int(product.unit_price),
+            "units_per_case": product.units_per_case,
+            # Agotado = no alcanza para una caja completa (igual que en /catalogo).
+            "sold_out": product.available_units is not None
+            and product.available_units < max(1, product.units_per_case),
+        }
+        for item, product in zip(products_as_catalog(products), products, strict=True)
+    ]
+
+
+def _days_left(value: float) -> float | None:
+    return round(value, 1) if math.isfinite(value) else None
+
+
+def store_actions(store_id: int, products: list[Product], source: str, shown: dict[str, BotMessage]) -> StoreActions:
+    """Las herramientas del agente para una tienda. Lo que hay que mostrar con botones queda en `shown`
+    (uno por tipo: si el agente arma dos borradores del mismo tipo, vale el último)."""
+    names = names_by_sku(products)
+
+    async def stock() -> list[dict]:
+        async with session_scope() as session:
+            analysis = await load_store_analysis(session, store_id)
+        if analysis is None:
+            return []
+        return [
+            {
+                "sku": item.sku,
+                "producto": item.name,
+                "unidades": item.stock,
+                "tiene_conteo": item.has_count,
+                "dias_que_alcanza": _days_left(item.coverage_days),
+            }
+            for item in analysis.products
+        ]
+
+    async def alerts() -> dict:
+        async with session_scope() as session:
+            analysis = await load_store_analysis(session, store_id)
+        if analysis is None:
+            return {"en_riesgo": [], "estancados": []}
+        return {
+            "en_riesgo": [{"producto": p.name, "motivo": p.reason} for p in analysis.at_risk],
+            "estancados": [{"producto": p.name, "motivo": p.reason} for p in analysis.stagnant],
+            "proxima_entrega": texts.day_label(analysis.next_delivery),
+        }
+
+    async def draft_sales(lines: list[SaleLine]) -> dict:
+        if not lines:
+            return {"borrador": "no_creado", "motivo": "Ningún producto se reconoció"}
+        payload_lines = [line.model_dump() for line in lines]
+        async with session_scope() as session:
+            pending = await replace_pending(session, store_id, KIND_SALES, {"source": source, "lines": payload_lines})
+            pending_id = pending.id
+        shown[KIND_SALES] = BotMessage(
+            texts.sales_summary(payload_lines, names), keyboards.confirm_sales_keyboard(pending_id)
+        )
+        return {"borrador": "creado"}
+
+    async def suggest_order() -> dict:
+        async with session_scope() as session:
+            store = await session.get(Store, store_id)
+            prepared = await prepare_order(session, store) if store is not None else None
+        if prepared is None:
+            return {"error": "No se pudo armar el pedido"}
+        message, info = prepared
+        shown[KIND_ORDER] = message
+        return info
+
+    async def change_order(changes: list[OrderChange]) -> dict:
+        if not changes:
+            return {"borrador": "sin_cambios"}
+        message, info = await change_open_order(store_id, changes, products)
+        if "error" not in info:
+            shown[KIND_ORDER] = message
+        return info
+
+    return StoreActions(
+        catalog=agent_catalog(products),
+        stock=stock,
+        alerts=alerts,
+        draft_sales=draft_sales,
+        suggest_order=suggest_order,
+        change_order=change_order,
+    )
+
+
+async def answer_with_agent(
+    update: Update, store_id: int, distributor_id: int, text: str, source: str, products: list[Product]
+) -> bool:
+    """El agente con herramientas responde al tendero. False si no alcanzó a hacer nada (usar respaldo)."""
+    shown: dict[str, BotMessage] = {}
+    actions = store_actions(store_id, products, source, shown)
+    try:
+        result: AgentResult | None = await run_agent(text, build_tools(actions), AGENT_SYSTEM_PROMPT)
+    except Exception:
+        logger.warning("El agente falló (Grok no respondió)")
+        result = None
+        if not shown:
+            return False
+    reply = result.reply if result is not None else ""
+    if reply:
+        await _reply(update, reply)
+    for message in shown.values():
+        await _reply(update, message.text, reply_markup=message.markup)
+    if not reply and not shown:
+        await _reply(update, texts.AI_FAIL)
     return True
 
 
@@ -917,46 +1109,12 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         store = await require_ready_store(update, session)
         if store is None:
             return
-        analysis = await load_store_analysis(session, store.id)
-        if analysis is None:
-            await _ask_login(update)
-            return
-        if await order_sent_for(session, store.id, analysis.next_delivery):
-            await _reply(update, texts.order_already_sent(analysis.next_delivery))
-            return
-        by_id = {p.id: p for p in await load_active_products(session, store.distributor_id)}
-        capped = cap_to_available(
-            [
-                {"product_id": line.product_id, "cases": line.cases, "reason": line.reason}
-                for line in analysis.order_lines
-            ],
-            by_id,
-        )
-        payload_lines = capped.lines
-        pending = await replace_pending(
-            session,
-            store.id,
-            KIND_ORDER,
-            {
-                "lines": payload_lines,
-                "delivery_date": analysis.next_delivery.isoformat(),
-                "order_deadline": analysis.order_deadline.isoformat(),
-            },
-            ttl=ORDER_PENDING_TTL,
-        )
-        pending_id = pending.id
-    lines = to_order_lines(payload_lines, by_id)
-    await _reply(
-        update,
-        texts.order_draft(
-            lines,
-            order_total(lines),
-            analysis.next_delivery,
-            analysis.order_deadline,
-            availability_notes=capped.not_found,
-        ),
-        reply_markup=keyboards.order_keyboard(pending_id),
-    )
+        prepared = await prepare_order(session, store)
+    if prepared is None:
+        await _ask_login(update)
+        return
+    message, _info = prepared
+    await _reply(update, message.text, reply_markup=message.markup)
 
 
 async def handle_send_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     grok_base_url: str = "https://api.reto.pltk.mx/v1"
     grok_model: str = "grok-4.20-0309-non-reasoning"
     bot_mode: str = "polling"
+    # Agente con herramientas (tool calling). En false se usa la extracción directa de antes.
+    agent_enabled: bool = True
     session_secret: str = "dev-session-secret-change-me"
     # Cuenta del panel que crea el seed. Sin valores por defecto: nada de contraseñas publicadas.
     panel_email: str = ""
