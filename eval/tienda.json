@@ -1,0 +1,381 @@
+{
+  "_nota": "Tienda fija de la evaluación. Catálogo = el del seed (scripts/seed.py). Reemplazar por datos reales cuando estén.",
+  "catalogo": [
+    {
+      "sku": "GAS-COCA-1L",
+      "name": "Coca-Cola 1 litro",
+      "aliases": "coca litro,coca cola litro,coca 1l,gaseosa coca litro",
+      "presentation": "1 L",
+      "units_per_case": 12,
+      "unit_price": 4500,
+      "sold_out": false
+    },
+    {
+      "sku": "GAS-COCA-400",
+      "name": "Coca-Cola 400 ml",
+      "aliases": "coca personal,coca 400,cocacola pequeña",
+      "presentation": "400 ml",
+      "units_per_case": 24,
+      "unit_price": 2500,
+      "sold_out": false
+    },
+    {
+      "sku": "GAS-POST-1.5",
+      "name": "Postobón 1.5 litros",
+      "aliases": "postobon,postobón litro y medio,gaseosa postobon",
+      "presentation": "1.5 L",
+      "units_per_case": 12,
+      "unit_price": 4000,
+      "sold_out": false
+    },
+    {
+      "sku": "GAS-COLO-400",
+      "name": "Colombiana 400 ml",
+      "aliases": "colombiana,kola,gaseosa colombiana",
+      "presentation": "400 ml",
+      "units_per_case": 24,
+      "unit_price": 2200,
+      "sold_out": false
+    },
+    {
+      "sku": "GAS-MANZ-400",
+      "name": "Manzana Postobón 400 ml",
+      "aliases": "manzana,gaseosa manzana,postobon manzana",
+      "presentation": "400 ml",
+      "units_per_case": 24,
+      "unit_price": 2200,
+      "sold_out": false
+    },
+    {
+      "sku": "MAL-PONY-330",
+      "name": "Pony Malta 330 ml",
+      "aliases": "pony,malta pony,pony malta",
+      "presentation": "330 ml",
+      "units_per_case": 24,
+      "unit_price": 2500,
+      "sold_out": false
+    },
+    {
+      "sku": "AGU-CRIS-600",
+      "name": "Agua Cristal 600 ml",
+      "aliases": "agua,cristal,agua cristal,botella de agua",
+      "presentation": "600 ml",
+      "units_per_case": 24,
+      "unit_price": 1800,
+      "sold_out": false
+    },
+    {
+      "sku": "AGU-BRIS-600",
+      "name": "Agua Brisa 600 ml",
+      "aliases": "brisa,agua brisa",
+      "presentation": "600 ml",
+      "units_per_case": 24,
+      "unit_price": 1800,
+      "sold_out": false
+    },
+    {
+      "sku": "ARR-ROSA-500",
+      "name": "Arroz Diana 500 g",
+      "aliases": "arroz,diana,arroz diana,arroza",
+      "presentation": "500 g",
+      "units_per_case": 20,
+      "unit_price": 2800,
+      "sold_out": false
+    },
+    {
+      "sku": "ARR-ROSA-1K",
+      "name": "Arroz Roa 1 kg",
+      "aliases": "arroz roa,roa,arroz kilo",
+      "presentation": "1 kg",
+      "units_per_case": 12,
+      "unit_price": 4800,
+      "sold_out": false
+    },
+    {
+      "sku": "ACE-GOUR-1L",
+      "name": "Aceite Gourmet 1 litro",
+      "aliases": "aceite,gourmet,aceite litro",
+      "presentation": "1 L",
+      "units_per_case": 12,
+      "unit_price": 12000,
+      "sold_out": false
+    },
+    {
+      "sku": "ACE-PREM-3L",
+      "name": "Aceite Premier 3 litros",
+      "aliases": "aceite grande,premier,aceite 3 litros",
+      "presentation": "3 L",
+      "units_per_case": 6,
+      "unit_price": 28000,
+      "sold_out": false
+    },
+    {
+      "sku": "AZU-MANU-1K",
+      "name": "Azúcar Manuelita 1 kg",
+      "aliases": "azucar,azúcar,manuelita,azucar kilo",
+      "presentation": "1 kg",
+      "units_per_case": 12,
+      "unit_price": 4500,
+      "sold_out": false
+    },
+    {
+      "sku": "HUE-AAA-30",
+      "name": "Huevos AAA x 30",
+      "aliases": "huevos,huevo,cubeta,huevos aaa",
+      "presentation": "x 30",
+      "units_per_case": 1,
+      "unit_price": 18000,
+      "sold_out": false
+    },
+    {
+      "sku": "PAN-TAJA-UND",
+      "name": "Pan tajado",
+      "aliases": "pan,pan tajado,pan de caja,tajado",
+      "presentation": "unidad",
+      "units_per_case": 10,
+      "unit_price": 5500,
+      "sold_out": true
+    },
+    {
+      "sku": "LEC-ALQU-1L",
+      "name": "Leche Alquería 1 litro",
+      "aliases": "leche,alqueria,alquería,leche litro",
+      "presentation": "1 L",
+      "units_per_case": 12,
+      "unit_price": 4200,
+      "sold_out": false
+    },
+    {
+      "sku": "LEC-ALPI-1L",
+      "name": "Leche Alpina 1 litro",
+      "aliases": "leche alpina,alpina",
+      "presentation": "1 L",
+      "units_per_case": 12,
+      "unit_price": 4500,
+      "sold_out": false
+    },
+    {
+      "sku": "CAF-SELLO-250",
+      "name": "Café Sello Rojo 250 g",
+      "aliases": "cafe,café,sello rojo,tinto",
+      "presentation": "250 g",
+      "units_per_case": 20,
+      "unit_price": 9800,
+      "sold_out": false
+    },
+    {
+      "sku": "CAF-AGUI-125",
+      "name": "Café Águila Roja 125 g",
+      "aliases": "aguila roja,águila roja,cafe aguila",
+      "presentation": "125 g",
+      "units_per_case": 24,
+      "unit_price": 5200,
+      "sold_out": false
+    },
+    {
+      "sku": "CON-JET-UND",
+      "name": "Jet chocolate",
+      "aliases": "jet,chocolatina jet,chocolate jet",
+      "presentation": "unidad",
+      "units_per_case": 24,
+      "unit_price": 1200,
+      "sold_out": false
+    },
+    {
+      "sku": "CON-BUBA-UND",
+      "name": "Bubalú",
+      "aliases": "bubalu,bubalú,chicle",
+      "presentation": "unidad",
+      "units_per_case": 50,
+      "unit_price": 500,
+      "sold_out": false
+    },
+    {
+      "sku": "CON-BONB-UND",
+      "name": "Bon Bon Bum",
+      "aliases": "bon bon bum,bombon,chupeta",
+      "presentation": "unidad",
+      "units_per_case": 48,
+      "unit_price": 700,
+      "sold_out": false
+    },
+    {
+      "sku": "ASE-FAB-500",
+      "name": "Fab polvo 500 g",
+      "aliases": "fab,detergente,jabon en polvo,jabón en polvo",
+      "presentation": "500 g",
+      "units_per_case": 12,
+      "unit_price": 6500,
+      "sold_out": false
+    },
+    {
+      "sku": "ASE-AXIO-400",
+      "name": "Axion 400 g",
+      "aliases": "axion,lavaloza,jabon de loza",
+      "presentation": "400 g",
+      "units_per_case": 12,
+      "unit_price": 4800,
+      "sold_out": false
+    },
+    {
+      "sku": "ASE-JABO-3",
+      "name": "Jabón Rey x 3",
+      "aliases": "jabon rey,jabón,rey,jabon de ropa",
+      "presentation": "x 3",
+      "units_per_case": 12,
+      "unit_price": 5500,
+      "sold_out": false
+    },
+    {
+      "sku": "ASE-BLAN-1L",
+      "name": "Blanqueador 1 litro",
+      "aliases": "cloro,blanqueador,límpido,limpido",
+      "presentation": "1 L",
+      "units_per_case": 12,
+      "unit_price": 3500,
+      "sold_out": false
+    },
+    {
+      "sku": "ASE-PAPEL-4",
+      "name": "Papel higiénico x 4",
+      "aliases": "papel,papel higienico,papel higiénico,familia",
+      "presentation": "x 4",
+      "units_per_case": 10,
+      "unit_price": 7500,
+      "sold_out": false
+    },
+    {
+      "sku": "SAL-REFIS-1K",
+      "name": "Sal Refisal 1 kg",
+      "aliases": "sal,refisal",
+      "presentation": "1 kg",
+      "units_per_case": 20,
+      "unit_price": 1800,
+      "sold_out": false
+    },
+    {
+      "sku": "PAS-DORIA-250",
+      "name": "Pasta Doria 250 g",
+      "aliases": "pasta,espagueti,doria,fideo",
+      "presentation": "250 g",
+      "units_per_case": 20,
+      "unit_price": 2200,
+      "sold_out": false
+    },
+    {
+      "sku": "ATU-VANC-170",
+      "name": "Atún Van Camps 170 g",
+      "aliases": "atun,atún,van camps,lata de atun",
+      "presentation": "170 g",
+      "units_per_case": 24,
+      "unit_price": 6900,
+      "sold_out": false
+    }
+  ],
+  "stock": [
+    {
+      "sku": "GAS-COCA-1L",
+      "producto": "Coca-Cola 1 litro",
+      "unidades": 7,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 1.8
+    },
+    {
+      "sku": "GAS-COCA-400",
+      "producto": "Coca-Cola 400 ml",
+      "unidades": 30,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 6.0
+    },
+    {
+      "sku": "MAL-PONY-330",
+      "producto": "Pony Malta 330 ml",
+      "unidades": 4,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 1.0
+    },
+    {
+      "sku": "AGU-CRIS-600",
+      "producto": "Agua Cristal 600 ml",
+      "unidades": 20,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 8.0
+    },
+    {
+      "sku": "ARR-ROSA-500",
+      "producto": "Arroz Diana 500 g",
+      "unidades": 15,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 7.5
+    },
+    {
+      "sku": "ACE-GOUR-1L",
+      "producto": "Aceite Gourmet 1 litro",
+      "unidades": 6,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 12.0
+    },
+    {
+      "sku": "HUE-AAA-30",
+      "producto": "Huevos AAA x 30",
+      "unidades": 2,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 2.0
+    },
+    {
+      "sku": "PAN-TAJA-UND",
+      "producto": "Pan tajado",
+      "unidades": 3,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 1.5
+    },
+    {
+      "sku": "LEC-ALQU-1L",
+      "producto": "Leche Alquería 1 litro",
+      "unidades": 10,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 3.3
+    },
+    {
+      "sku": "ATU-VANC-170",
+      "producto": "Atún Van Camps 170 g",
+      "unidades": 18,
+      "tiene_conteo": true,
+      "dias_que_alcanza": null
+    },
+    {
+      "sku": "CON-BONB-UND",
+      "producto": "Bon Bon Bum",
+      "unidades": 40,
+      "tiene_conteo": true,
+      "dias_que_alcanza": 10.0
+    }
+  ],
+  "alertas": {
+    "en_riesgo": [
+      {
+        "producto": "Coca-Cola 1 litro",
+        "motivo": "Se acaba en 2 días; la próxima entrega es en 4"
+      },
+      {
+        "producto": "Pony Malta 330 ml",
+        "motivo": "Se acaba en 1 día; la próxima entrega es en 4"
+      }
+    ],
+    "estancados": [
+      {
+        "producto": "Atún Van Camps 170 g",
+        "motivo": "No se ha vendido en 4 semanas"
+      }
+    ],
+    "proxima_entrega": "jueves 12/11"
+  },
+  "pedido_sugerido": {
+    "borrador": "creado",
+    "entrega": "jueves 12/11",
+    "hora_limite": "miércoles 11/11 a las 6 p. m.",
+    "productos": 4,
+    "total_pesos": 393600,
+    "nota": "El tendero lo revisa y lo envía con el botón del pedido."
+  }
+}
