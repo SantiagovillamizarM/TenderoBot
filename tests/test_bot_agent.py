@@ -1,6 +1,9 @@
 """El agente conectado al bot: qué se le muestra al tendero y cuándo se usa el respaldo."""
 
+import json
+import math
 from contextlib import asynccontextmanager
+from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -8,7 +11,9 @@ import pytest
 
 from app.ai.agent import AgentResult
 from app.bot import handlers, texts
-from app.schemas import SaleLine
+from app.inventory.engine import COLOMBIA_TZ as COLOMBIA
+from app.schemas import OrderChange, SaleLine
+
 
 COCA = SimpleNamespace(
     id=10,
@@ -38,9 +43,14 @@ def bot(monkeypatch):
     replies: list[tuple[str, object]] = []
     drafts: list = []
 
+    store = SimpleNamespace(id=7, distributor_id=1)
+
+    async def get(model, pk):
+        return store if pk == store.id else None
+
     @asynccontextmanager
     async def fake_scope():
-        yield SimpleNamespace()
+        yield SimpleNamespace(get=get)
 
     async def record(update, text, reply_markup=None):
         replies.append((text, reply_markup))
@@ -204,3 +214,136 @@ async def test_route_text_respects_agent_flag(bot, monkeypatch, enabled):
     monkeypatch.setattr(handlers, "get_settings", lambda: SimpleNamespace(agent_enabled=enabled))
     await handlers.route_text(None, "vendí 2 cocas", "text")
     assert calls == (["agent"] if enabled else ["extract"])
+
+
+# --- Lo que el agente lee y arma en la tienda ----------------------------------
+
+DELIVERY = date(2026, 11, 12)
+DEADLINE = datetime(2026, 11, 11, 18, 0, tzinfo=COLOMBIA)
+
+
+def fake_analysis():
+    coca = SimpleNamespace(
+        sku="GAS-COCA-1L", name="Coca-Cola 1 litro", stock=7, has_count=True, coverage_days=1.75,
+        reason="Se acaba en 2 días",
+    )
+    pan = SimpleNamespace(
+        sku="PAN-TAJA-UND", name="Pan tajado", stock=0, has_count=False, coverage_days=math.inf,
+        reason="No se ha vendido en 4 semanas",
+    )
+    return SimpleNamespace(
+        products=[coca, pan],
+        at_risk=[coca],
+        stagnant=[pan],
+        next_delivery=DELIVERY,
+        order_deadline=DEADLINE,
+        order_lines=[SimpleNamespace(product_id=10, cases=2, reason="Se acaba en 2 días")],
+    )
+
+
+@pytest.fixture
+def store_data(monkeypatch):
+    async def analysis(session, store_id):
+        return fake_analysis()
+
+    async def products(session, distributor_id):
+        return [COCA, PAN]
+
+    async def not_sent(session, store_id, delivery):
+        return False
+
+    monkeypatch.setattr(handlers, "load_store_analysis", analysis)
+    monkeypatch.setattr(handlers, "load_active_products", products)
+    monkeypatch.setattr(handlers, "order_sent_for", not_sent)
+
+
+def actions(shown=None):
+    return handlers.store_actions(7, [COCA, PAN], "text", shown if shown is not None else {})
+
+
+@pytest.mark.asyncio
+async def test_stock_tool_reads_engine_without_infinite_days(bot, store_data):
+    rows = await actions().stock()
+    assert rows[0] == {
+        "sku": "GAS-COCA-1L",
+        "producto": "Coca-Cola 1 litro",
+        "unidades": 7,
+        "tiene_conteo": True,
+        "dias_que_alcanza": 1.8,
+    }
+    # Sin ventas la cobertura es infinita: al modelo le llega null, no "inf".
+    assert rows[1]["dias_que_alcanza"] is None
+    assert json.dumps(rows)
+
+
+@pytest.mark.asyncio
+async def test_alerts_tool_lists_risk_and_stagnant(bot, store_data):
+    alerts = await actions().alerts()
+    assert alerts["en_riesgo"] == [{"producto": "Coca-Cola 1 litro", "motivo": "Se acaba en 2 días"}]
+    assert alerts["estancados"][0]["producto"] == "Pan tajado"
+    assert alerts["proxima_entrega"] == "jueves 12/11"
+
+
+@pytest.mark.asyncio
+async def test_suggest_order_creates_draft_and_shows_it(bot, store_data):
+    shown = {}
+    info = await actions(shown).suggest_order()
+    assert info["borrador"] == "creado"
+    assert info["total_pesos"] == 2 * 12 * 4500
+    assert info["entrega"] == "jueves 12/11"
+    assert bot.drafts[0].kind == handlers.KIND_ORDER
+    assert bot.drafts[0].payload["delivery_date"] == "2026-11-12"
+    message = shown[handlers.KIND_ORDER]
+    assert message.markup.inline_keyboard[0][0].callback_data.endswith(":1")
+
+
+@pytest.mark.asyncio
+async def test_suggest_order_when_already_sent(bot, store_data, monkeypatch):
+    async def sent(session, store_id, delivery):
+        return True
+
+    monkeypatch.setattr(handlers, "order_sent_for", sent)
+    shown = {}
+    info = await actions(shown).suggest_order()
+    assert info == {"ya_enviado": "2026-11-12"}
+    assert bot.drafts == []
+    assert shown[handlers.KIND_ORDER].text == texts.order_already_sent(DELIVERY)
+
+
+@pytest.mark.asyncio
+async def test_change_order_updates_open_draft(bot, monkeypatch):
+    open_order = SimpleNamespace(
+        id=40,
+        kind="order",
+        payload={
+            "lines": [{"product_id": 10, "cases": 1, "reason": "Se acaba"}],
+            "delivery_date": DELIVERY.isoformat(),
+            "order_deadline": DEADLINE.isoformat(),
+        },
+    )
+
+    async def pending(session, store_id, kind):
+        return open_order
+
+    monkeypatch.setattr(handlers, "get_pending", pending)
+    shown = {}
+    changes = [OrderChange(sku="GAS-COCA-1L", product_text="coca", action="add", quantity=1)]
+    info = await actions(shown).change_order(changes)
+    assert info["borrador"] == "actualizado"
+    assert info["total_pesos"] == 2 * 12 * 4500
+    assert bot.drafts[0].payload["lines"] == [{"product_id": 10, "cases": 2, "reason": "Se acaba"}]
+    assert bot.drafts[0].payload["delivery_date"] == DELIVERY.isoformat()
+    assert handlers.KIND_ORDER in shown
+
+
+@pytest.mark.asyncio
+async def test_pedido_command_shows_draft_with_buttons(bot, store_data, monkeypatch):
+    async def ready(update, session):
+        return SimpleNamespace(id=7, distributor_id=1)
+
+    monkeypatch.setattr(handlers, "require_ready_store", ready)
+    await handlers.handle_order(None, None)
+    text, markup = bot.replies[0]
+    assert "Coca-Cola 1 litro" in text
+    assert markup is not None
+    assert bot.drafts[0].kind == handlers.KIND_ORDER
