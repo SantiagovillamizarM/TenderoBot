@@ -63,6 +63,26 @@ def best_product_match(query: str, products: list[dict]) -> dict | None:
     return best
 
 
+SUGGESTION_THRESHOLD = 60
+
+
+def search_products(query: str, products: list[dict], limit: int = 3) -> list[dict]:
+    """Los productos más parecidos al texto, del más al menos parecido (para sugerir opciones)."""
+    query = (query or "").strip()
+    if not query:
+        return []
+    scored: list[tuple[float, dict]] = []
+    for product in products:
+        terms = product_terms(product)
+        if not terms:
+            continue
+        result = process.extractOne(query, terms, scorer=fuzz.WRatio, score_cutoff=SUGGESTION_THRESHOLD)
+        if result is not None:
+            scored.append((result[1], product))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [product for _score, product in scored[:limit]]
+
+
 def resolve_sku(sku: str | None, query_text: str, products: list[dict]) -> str | None:
     by_sku = catalog_by_sku(products)
     cleaned_sku = (sku or "").strip()

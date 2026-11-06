@@ -95,6 +95,27 @@ async def _chat_completion(content: Any, response_schema: dict, schema_name: str
     return response.json()["choices"][0]["message"].get("content") or ""
 
 
+async def chat_with_tools(messages: list[dict], tools: list[dict]) -> tuple[dict, dict]:
+    """Una vuelta del agente: Grok responde con texto o pide herramientas (tool calling).
+
+    Devuelve el mensaje del asistente y el uso de tokens que reporta la pasarela.
+    """
+    settings = get_settings()
+    response = await _get_client().post(
+        "/chat/completions",
+        json={
+            "model": settings.grok_model,
+            "temperature": 0,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+        },
+    )
+    response.raise_for_status()
+    body = response.json()
+    return body["choices"][0]["message"], body.get("usage") or {}
+
+
 async def transcribe_audio(audio_bytes: bytes, mime_type: str) -> str:
     """Voz → texto con el endpoint /stt. El audio no se guarda en ningún lado."""
     extension = "ogg" if "ogg" in mime_type else mime_type.rsplit("/", 1)[-1]
