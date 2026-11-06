@@ -39,9 +39,10 @@ Login con correo y contraseña. Debe mostrar:
 
 ## Reglas obligatorias
 - Todo debe usar servicios **gratuitos**.
-- La IA **solo extrae datos** (voz, texto o foto → JSON). Ningún cálculo lo hace la IA.
+- La IA entiende al tendero y escoge la herramienta (tool calling); las herramientas son código. Ningún cálculo de inventario lo hace la IA.
 - Ningún producto se guarda si no existe en el catálogo.
-- Toda extracción de la IA se confirma con botones antes de guardarse.
+- Toda venta, conteo o pedido que prepare la IA se confirma con botones antes de guardarse o enviarse.
+- Las reglas que importan (por ejemplo, que el tendero dijo la cantidad) las verifica el código, no las instrucciones del modelo.
 - Las claves y contraseñas van solo en un archivo `.env`, nunca en el código ni en GitHub.
 - Cada tienda y cada distribuidor solo ven sus propios datos.
 - No se guardan las fotos ni los audios; se procesan y se descartan.

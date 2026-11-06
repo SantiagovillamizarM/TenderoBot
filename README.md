@@ -44,44 +44,96 @@ En **Productos** maneja su catálogo: agrega productos, cambia precios, actualiz
 
 ## Cómo usa Grok
 
-Grok **solo extrae datos**: convierte voz, texto o foto en JSON. Todos los cálculos de inventario los hace código normal, sin IA.
+Grok es un **agente con herramientas** (tool calling): lee lo que el tendero escribe o dice, decide qué herramienta usar y le responde. Las herramientas son código normal: el inventario, las alertas y el pedido los calcula el motor, nunca el modelo.
 
 ```
-Voz  ──► Grok /stt (voz a texto) ──┐
-Texto ─────────────────────────────┼─► Grok chat (JSON con esquema) ──► búsqueda en catálogo
-Foto ──► Grok chat con imagen ──────┘        (rapidfuzz)
-                                                  │
-                                                  ▼
-                              Resumen con botones ✅ Confirmar / ❌ Cancelar
-                                                  │
-                                                  ▼
-                       PostgreSQL ──► motor de inventario (código) ──► /stock, /alertas, /pedido, panel
+Voz ──► Grok /stt (voz a texto) ──┐
+Texto ────────────────────────────┴─► Agente (Grok + herramientas) ──► herramienta (código)
+                                          ▲                              │
+                                          └──── resultado en JSON ◄──────┘
+                                          │
+                                          ▼
+                     Respuesta corta + resumen con botones ✅ Confirmar / ❌ Cancelar
+                                          │
+                                          ▼
+                   PostgreSQL ──► motor de inventario (código) ──► /stock, /alertas, /pedido, panel
+
+Foto ──► Grok con imagen (JSON con esquema) ──► conteo para confirmar
 ```
 
-- La conexión es con la API del reto (`https://api.reto.pltk.mx/v1`), que es compatible con OpenAI. El modelo por defecto es `grok-4.20-0309-non-reasoning`.
-- El código está en [app/ai/grok_client.py](app/ai/grok_client.py) y las instrucciones para Grok en [app/ai/prompts.py](app/ai/prompts.py).
-- Si Grok devuelve algo inválido, se reintenta una vez. Si vuelve a fallar, el tendero ve: *"No te entendí, intenta de nuevo o escríbelo"*.
-- Un producto que no está en el catálogo nunca se guarda.
+| Herramienta | Qué hace |
+|---|---|
+| `registrar_ventas` | Prepara el resumen de ventas para que el tendero confirme. Busca sola los productos en el catálogo. |
+| `consultar_stock` | Cuántas unidades tiene la tienda, de todo o de un producto. |
+| `ver_alertas` | Qué se va a acabar antes de la próxima entrega y qué no se está vendiendo. |
+| `buscar_producto` | Precio, presentación y si está agotado donde el proveedor. |
+| `armar_pedido` | Arma el pedido sugerido para la próxima entrega y lo deja como borrador. |
+| `ajustar_pedido` | Agrega, quita o cambia productos del pedido que el tendero está revisando. |
+
+- Ninguna herramienta guarda ventas ni envía pedidos: solo crean borradores. El tendero siempre confirma con un botón.
+- **Reglas que verifica el código, no el modelo.** Si el tendero no dijo cuántas unidades vendió, o habla de unidades sueltas o docenas de un producto que se vende en paquete, esa venta no se registra y el bot le pregunta. Grok tiene que citar las palabras con que el tendero dijo la cantidad (`texto_cantidad`), y la herramienta comprueba que esas palabras estén en el mensaje. Esto salió de la evaluación: con solo instrucciones, Grok a veces asumía 1 o inventaba la cita (ver [eval/resultados/HISTORIAL.md](eval/resultados/HISTORIAL.md)).
+- El ciclo tiene máximo 4 vueltas. Si Grok falla antes de hacer algo, el bot usa la extracción directa de antes (sin herramientas). Con `AGENT_ENABLED=false` se usa siempre esa extracción.
+- La conexión es con la API del reto (`https://api.reto.pltk.mx/v1`), compatible con OpenAI. El modelo por defecto es `grok-4.20-0309-non-reasoning`.
+- Código: el agente en [app/ai/agent.py](app/ai/agent.py), las herramientas en [app/ai/tools.py](app/ai/tools.py), las instrucciones en [app/ai/prompts.py](app/ai/prompts.py) y la conexión en [app/ai/grok_client.py](app/ai/grok_client.py).
 
 ### Ejemplo de ejecución
 
-Entrada (texto en Telegram):
+Ejecución real contra la pasarela (tienda de la evaluación). El tendero escribe en Telegram:
 
 ```
 vendí 2 Coca-Cola litro, un pan tajado y 3 bon bon bum
 ```
 
-JSON que devuelve Grok, ya ligado al catálogo:
+Grok llama a la herramienta:
 
 ```json
-{"lines": [
-  {"sku": "GAS-COCA-1L",  "product_text": "Coca-Cola litro", "quantity": 2},
-  {"sku": "PAN-TAJA-UND", "product_text": "pan tajado",      "quantity": 1},
-  {"sku": "CON-BONB-UND", "product_text": "bon bon bum",     "quantity": 3}
-]}
+{"name": "registrar_ventas", "arguments": {"ventas": [
+  {"producto": "Coca-Cola litro", "cantidad": 2, "texto_cantidad": "2"},
+  {"producto": "pan tajado",      "cantidad": 1, "texto_cantidad": "un"},
+  {"producto": "bon bon bum",     "cantidad": 3, "texto_cantidad": "3"}
+]}}
 ```
 
-Salida: el bot muestra el resumen con los botones. Al confirmar, las ventas quedan guardadas y se reflejan en `/stock`, `/alertas` y `/pedido`.
+La herramienta busca los productos, crea el borrador y le devuelve a Grok:
+
+```json
+{"borrador": "creado",
+ "reconocidas": [{"producto": "Coca-Cola 1 litro", "cantidad": 2},
+                 {"producto": "Pan tajado", "cantidad": 1},
+                 {"producto": "Bon Bon Bum", "cantidad": 3}],
+ "no_reconocidas": [],
+ "nota": "Aún no se guardó: el tendero debe pulsar ✅ Confirmar en el resumen."}
+```
+
+Grok responde *"Revisa el resumen de ventas y pulsa ✅ Confirmar para guardar."* y el bot muestra el resumen con los botones. Esta tarea usó 2 llamadas a Grok, 3.248 tokens de entrada (1.664 en caché) y 79 de salida, y costó US$0,0025.
+
+### Bitácora de consumo
+
+Cada llamada a Grok queda en la tabla `llm_usage`: tokens de entrada, en caché y de salida, costo, latencia, si falló, y la tarea a la que pertenece (un mensaje del tendero puede necesitar varias llamadas). El costo sale de la pasarela, que lo reporta en cada respuesta (`usage.cost_in_usd_ticks`, donde 1 USD = 10¹⁰ ticks). Solo se guardan números: nunca el texto del tendero ni la respuesta del modelo. Código en [app/ai/usage.py](app/ai/usage.py) y [app/usage_log.py](app/usage_log.py).
+
+## Evaluación y costo por tarea
+
+Set propio de 54 casos en [eval/casos.jsonl](eval/casos.jsonl): ventas (también con trampas, como "cerveza Águila" o "media docena de huevos"), pedido, consultas, conversación y seguridad. El agente corre de verdad contra Grok, sobre una tienda fija ([eval/tienda.json](eval/tienda.json)), y un calificador compara lo que hizo con lo esperado. Cómo agregar casos: [eval/README.md](eval/README.md).
+
+```bash
+python -m scripts.run_eval        # corre los casos y escribe eval/resultados/<fecha>/resumen.md
+python -m scripts.cost_report     # costo por tarea resuelta y proyección por tienda
+```
+
+**Resultado:** 47 de 48 casos ejecutados (98%), estable en 3 repeticiones. Los 6 casos de audio y foto esperan archivos reales y no cuentan.
+
+| Tipo de tarea | Acierto | Costo por tarea resuelta |
+|---|---|---|
+| Ventas | 96% | US$0,00133 ($4,23) |
+| Pedido | 100% | US$0,00119 ($3,78) |
+| Consulta | 100% | US$0,00117 ($3,71) |
+| Conversación | 100% | US$0,00068 ($2,17) |
+
+Con 20 mensajes al día, una tienda cuesta unos **US$0,71 al mes (~$2.270)**. Detalle, supuestos y lo que no se pudo costear (la transcripción de audio): [eval/resultados/COSTOS.md](eval/resultados/COSTOS.md).
+
+La primera corrida dio 92%. Las mejoras, incluida una regresión al 85% que obligó a pasar reglas del modelo al código, están en [eval/resultados/HISTORIAL.md](eval/resultados/HISTORIAL.md).
+
+**Falla todavía:** *"vendí 10 huevos"* se registra como 10 cubetas de 30. El tendero lo ve en el resumen antes de confirmar, pero arreglarlo bien requiere que el catálogo diga en qué unidad se vende cada producto.
 
 ## Cálculos de inventario (sin IA)
 
@@ -121,6 +173,7 @@ Con `BOT_MODE=polling` el bot funciona desde tu computador, sin desplegar nada.
 - **Panel:** entra a http://localhost:8000/login con `PANEL_EMAIL` y `PANEL_PASSWORD` del `.env`. Para cambiarlos sin borrar datos: `python -m scripts.panel_user tu@correo.com` (pide la contraseña oculta). El login no deja entrar con contraseñas de prueba como `demo1234`.
 - **Administración:** crea tu cuenta con `python -m scripts.admin_user tu@correo.com` y entra a http://localhost:8000/login (el mismo login te lleva a `/admin`).
 - **Pruebas:** `python -m pytest`
+- **Evaluación:** `python -m scripts.run_eval` (corre contra Grok, cuesta unos US$0,06)
 
 ### Variables de entorno
 
@@ -133,6 +186,7 @@ Con `BOT_MODE=polling` el bot funciona desde tu computador, sin desplegar nada.
 | `GROK_API_KEY` | API key del reto |
 | `GROK_BASE_URL` | Por defecto `https://api.reto.pltk.mx/v1` |
 | `GROK_MODEL` | Por defecto `grok-4.20-0309-non-reasoning` |
+| `AGENT_ENABLED` | `true` (por defecto): agente con herramientas. `false`: extracción directa sin herramientas |
 | `SESSION_SECRET` | Firma de la sesión del panel |
 | `PANEL_EMAIL`, `PANEL_PASSWORD` | Cuenta del panel que crea el seed (contraseña de 12 caracteres o más) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Correo de respaldo para tenderos que no abren el bot (gratis con Gmail y una contraseña de aplicación). Vacíos = no se mandan correos. |
@@ -141,19 +195,21 @@ Las claves van solo en `.env`, que está en `.gitignore`. Nunca se suben al repo
 
 ## Reglas que cumple
 
-- La IA solo extrae datos; ningún cálculo lo hace la IA.
-- Toda extracción se confirma con botones antes de guardarse.
+- La IA entiende al tendero y escoge la herramienta; ningún cálculo de inventario lo hace la IA.
+- Toda venta, conteo y pedido se confirma con botones antes de guardarse o enviarse.
 - Antes de usar el bot, el tendero acepta el tratamiento de sus datos personales (Ley 1581 de 2012).
 - Cada tienda y cada distribuidor ven solo sus propios datos.
 - Las fotos y los audios se procesan y se descartan; no se guardan.
 
 ## Estado
 
-**Semana 1 — flujo de punta a punta:** listo. El agente recibe voz, texto o foto, llama a Grok, procesa la respuesta y entrega un resultado (resumen para confirmar, inventario, alertas y pedido).
+- **Semana 1, flujo de punta a punta:** listo. El agente recibe voz, texto o foto, llama a Grok, procesa la respuesta y entrega un resultado (resumen para confirmar, inventario, alertas y pedido).
+- **Semana 2, Grok por la pasarela y herramientas:** listo. Agente con tool calling y 6 herramientas.
+- **Semana 3, evaluación y costo:** set propio de 54 casos con resultados, bitácora de consumo y costo por tarea resuelta. Faltan los casos con audios y fotos reales.
 
 **Pendiente:**
 
+- Casos de evaluación con audios, fotos y mensajes reales de tenderos.
+- Unidad de venta por producto en el catálogo (para *"vendí 10 huevos"*).
 - Despliegue con Docker en Render y UptimeRobot para que no se apague.
-- Mejorar los datos de prueba (el producto que crece) y la detección de ventas escritas sin la palabra "vendí".
 - Aviso al distribuidor cuando el tendero envía un pedido; hoy queda registrado en el panel.
-- Las herramientas, ejecuciones y casos de evaluación de las siguientes semanas del reto.

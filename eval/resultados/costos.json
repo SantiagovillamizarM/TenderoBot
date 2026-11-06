@@ -1,0 +1,85 @@
+{
+  "corridas": [
+    "20261106-081523",
+    "20261106-081619",
+    "20261106-081646"
+  ],
+  "trm": 3182.99,
+  "mezcla_diaria": {
+    "ventas": 12,
+    "consulta": 3,
+    "pedido": 2,
+    "conversacion": 2,
+    "foto": 1
+  },
+  "por_tipo": {
+    "ventas": {
+      "tareas": 78,
+      "pasaron": 75,
+      "acierto": 0.9615384615384616,
+      "costo_promedio_usd": 0.0012770166666666667,
+      "costo_max_usd": 0.0027047,
+      "costo_por_tarea_resuelta_usd": 0.0013280973333333332,
+      "llamadas_promedio": 1.9615384615384615,
+      "tokens_entrada_promedio": 3150.2820512820513,
+      "tokens_cache_promedio": 2720.8205128205127,
+      "tokens_salida_promedio": 78.41025641025641,
+      "segundos_promedio": 2.352051282051282
+    },
+    "pedido": {
+      "tareas": 30,
+      "pasaron": 30,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.0011891133333333333,
+      "costo_max_usd": 0.0028304,
+      "costo_por_tarea_resuelta_usd": 0.0011891133333333333,
+      "llamadas_promedio": 2,
+      "tokens_entrada_promedio": 3142.866666666667,
+      "tokens_cache_promedio": 2726.4,
+      "tokens_salida_promedio": 49.3,
+      "segundos_promedio": 2.034333333333333
+    },
+    "consulta": {
+      "tareas": 21,
+      "pasaron": 21,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.0011657357142857143,
+      "costo_max_usd": 0.0024053,
+      "costo_por_tarea_resuelta_usd": 0.0011657357142857143,
+      "llamadas_promedio": 2,
+      "tokens_entrada_promedio": 3185.8571428571427,
+      "tokens_cache_promedio": 2785.5238095238096,
+      "tokens_salida_promedio": 43.285714285714285,
+      "segundos_promedio": 1.8914285714285715
+    },
+    "conversacion": {
+      "tareas": 15,
+      "pasaron": 15,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.0006828466666666666,
+      "costo_max_usd": 0.0018631,
+      "costo_por_tarea_resuelta_usd": 0.0006828466666666667,
+      "llamadas_promedio": 1.2,
+      "tokens_entrada_promedio": 1863.2,
+      "tokens_cache_promedio": 1638.4,
+      "tokens_salida_promedio": 29.666666666666668,
+      "segundos_promedio": 1.2773333333333332
+    },
+    "foto": {
+      "tareas": 3,
+      "pasaron": 3,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.00059575,
+      "costo_max_usd": 0.00059575,
+      "costo_por_tarea_resuelta_usd": 0.00059575,
+      "llamadas_promedio": 1,
+      "tokens_entrada_promedio": 2613,
+      "tokens_cache_promedio": 2560,
+      "tokens_salida_promedio": 7,
+      "segundos_promedio": 1.7386666666666666
+    }
+  },
+  "tipos_sin_medir": [],
+  "costo_diario_tienda_usd": 0.02377404514285714,
+  "costo_mensual_tienda_usd": 0.7132213542857142
+}
