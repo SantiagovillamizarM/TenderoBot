@@ -1,0 +1,8 @@
+2026-11-06 11:27:41,711 INFO __main__: Corrida «prueba-2.0»: 7 unidades, una cada 2.0 s, modelo grok-4.20-0309-non-reasoning. Bitácora de texto en carga\logs\prueba-2.0.log
+2026-11-06 11:27:44,084 INFO carga: U00001 exito   conversacion | buenos días 
+2026-11-06 11:27:46,923 INFO carga: U00002 exito   venta | se fueron tres lavaloza 
+2026-11-06 11:27:47,951 INFO carga: U00003 exito   venta_dificil | vendí una docena de huevos sueltos 
+2026-11-06 11:27:50,338 INFO carga: U00006 exito   consulta | cuánto vale Blanqueador 1 litro? 
+2026-11-06 11:27:52,695 INFO carga: U00011 exito   pedido | arma el pedido de esta semana 
+2026-11-06 11:27:54,812 INFO carga: U00012 exito   pedido | que sean 2 cajas de arroz kilo 
+2026-11-06 11:27:56,346 INFO carga: U00040 exito   consulta | cuántos café tengo? 

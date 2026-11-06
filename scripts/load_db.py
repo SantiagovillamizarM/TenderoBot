@@ -2,11 +2,13 @@
 
     docker compose -f docker-compose.carga.yml up -d   # PostgreSQL local (una sola vez)
     python -m scripts.load_db setup                     # tablas + catálogo + 3 tiendas con 60 días de historia
+                                                        # + tablas de la carga (corridas, unidades, señales de vida)
     python -m scripts.load_db estado                    # qué hay en la base de carga
 
 Usa LOAD_DATABASE_URL (del entorno o del .env; por defecto el PostgreSQL local de
 docker-compose.carga.yml) y se niega a correr si es la misma base que DATABASE_URL.
-`setup` borra y vuelve a crear los datos del distribuidor de prueba en la base de carga.
+`setup` borra y vuelve a crear los datos del distribuidor de prueba en la base de carga (las corridas
+anteriores se conservan).
 """
 
 import argparse
@@ -59,7 +61,18 @@ def setup() -> None:
     print(f"Base de carga: {url}")
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True, env=os.environ.copy())
     subprocess.run([sys.executable, "-m", "scripts.seed", "--demo"], check=True, env=os.environ.copy())
+    asyncio.run(create_load_tables())
     print_summary()
+
+
+async def create_load_tables() -> None:
+    """Tablas de la carga (corridas, unidades, señales de vida): solo en esta base, no en las migraciones."""
+    from app.db import engine
+    from app.load.models import LoadBase
+
+    async with engine.begin() as connection:
+        await connection.run_sync(LoadBase.metadata.create_all)
+    await engine.dispose()
 
 
 def print_summary() -> None:
