@@ -135,6 +135,52 @@ La primera corrida dio 92%. Las mejoras, incluida una regresión al 85% que obli
 
 **Falla todavía:** *"vendí 10 huevos"* se registra como 10 cubetas de 30. El tendero lo ve en el resumen antes de confirmar, pero arreglarlo bien requiere que el catálogo diga en qué unidad se vende cada producto.
 
+## Semana de carga (S4)
+
+El agente procesa **1.000 mensajes o más en una corrida continua de al menos 12 horas, sin supervisión**, y deja la bitácora completa: tokens, costo, tasa de éxito y errores.
+
+**Unidad de trabajo:** un mensaje de un tendero que el agente atiende de punta a punta, igual que en el bot. Grok escoge las herramientas, las herramientas leen y escriben en la base (borradores de ventas y de pedido, stock, alertas) y al final el código revisa si el resultado fue el correcto. Si la venta quedó bien, se confirma como lo haría el tendero y mueve el inventario; si quedó mal, se cancela. Definición en [app/load/units.py](app/load/units.py).
+
+### Cómo funciona
+
+| Pieza | Qué hace | Código |
+|---|---|---|
+| Base aparte | PostgreSQL local en Docker, con el mismo catálogo y 3 tiendas con 60 días de historia. Las ventas de la carga nunca caen en la base real: los scripts se niegan a correr si `LOAD_DATABASE_URL` es la misma base que `DATABASE_URL`. | [docker-compose.carga.yml](docker-compose.carga.yml), [app/load/database.py](app/load/database.py) |
+| Generador | Arma los mensajes como los escribe un tendero ("salieron diez atun, 3 cocas cola litro y 2 jabon de ropa"), cada uno con su resultado esperado. La mezcla es 61% ventas, 16% consultas, 10% pedido, 8% conversación y 5% ventas difíciles (sin cantidad, productos que no existen, huevos sueltos). Es determinista: la misma semilla da los mismos mensajes. Se pueden mezclar mensajes reales (`--reales`). | [app/load/generator.py](app/load/generator.py) |
+| Lista de pendientes | Una tabla con cada mensaje y su estado (pendiente, procesando, éxito, fallo, error). Si el programa se cae, al volver sigue donde iba, sin repetir ni perder mensajes. | [app/load/models.py](app/load/models.py) |
+| Trabajador | Procesa un mensaje a la vez, a ritmo fijo (con `--horas 12.5`, 1.500 mensajes quedan a uno cada 30 s). Si la pasarela falla (429, 5xx, tiempo agotado, sin red), reintenta 2 veces más; con 5 mensajes seguidos fallando, pausa 5 minutos. La venta y su resultado se guardan en una sola transacción: una caída nunca registra una venta dos veces. Deja una señal de vida cada 5 minutos y Windows no se suspende mientras corre. | [app/load/worker.py](app/load/worker.py), [app/load/runner.py](app/load/runner.py) |
+| Bitácora | Cada mensaje con su resultado, intentos, tokens, costo y error, más cada llamada a Grok (también las de reintentos). Los fallos se clasifican: errores de pasarela, red, tiempo o código; y fallos del agente (alucinó un resumen, ventas o cambios equivocados, herramienta no usada o prohibida, respuesta sin el dato). | [app/load/logbook.py](app/load/logbook.py) |
+
+### Comandos
+
+```bash
+docker compose -f docker-compose.carga.yml up -d     # 1. base de carga (una vez)
+python -m scripts.load_db setup                      # 2. tablas, catálogo y tiendas en esa base
+python -m scripts.load_generate                      # 3. 1.500 mensajes en carga/unidades.jsonl
+
+python -m scripts.load_run crear  --corrida grande --unidades carga/unidades.jsonl
+python -m scripts.load_run correr --corrida grande --horas 12.5   # si se corta, el mismo comando sigue
+python -m scripts.load_run estado --corrida grande                # cómo va
+python -m scripts.load_report     --corrida grande                # bitácora completa
+```
+
+`crear` hace que cada tienda "cuente" su estante antes de empezar (300 unidades por producto, `--conteo-inicial`), para que las ventas de 12 horas no dejen el inventario en negativo.
+
+La bitácora queda en `carga/resultados/<corrida>/`:
+
+- `resumen.md` y `resumen.json`: resultado general y por tipo de mensaje, consumo (llamadas, tokens, % en caché, costo total, por unidad y por unidad resuelta, en USD y pesos), latencia, fallos clasificados con ejemplos, continuidad (cortes de 10 minutos o más y el mayor hueco entre señales de vida) y una fila por hora.
+- `unidades.csv` y `unidades.jsonl`: cada mensaje con lo que hizo el agente.
+- `llamadas.csv`: cada llamada a Grok, atada a su mensaje (`task_id = r<corrida>-<unidad>`).
+- `por_hora.csv` y `senales.csv`.
+
+### Estado de S4
+
+- **Listo:** la unidad de trabajo, el generador (1.500 mensajes en [carga/unidades.jsonl](carga/unidades.jsonl) y un piloto de 50 con todos los tipos en [carga/piloto.jsonl](carga/piloto.jsonl)), la base aparte, el trabajador y la bitácora.
+- **Probado contra Grok:** una corrida de 7 mensajes, uno de cada tipo, con 7 de 7 bien a US$0,0015 por mensaje. Se revisó en la base que la venta quedó confirmada, que no quedaron resúmenes abiertos, que cada llamada quedó en la bitácora y que hubo señales de vida.
+- **Falta:** la prueba piloto de 50 mensajes en unos 30 minutos, la prueba de recuperación (matar el programa a la mitad y comprobar que sigue sin repetir) y la corrida de 12 horas.
+- **Costo estimado:** con ~US$0,0015 por mensaje, 1.500 mensajes cuestan unos US$2,30.
+- **Los mensajes son generados:** se marcan `generado`; los mensajes reales de tenderos entran con `origen: real` y la bitácora los cuenta aparte.
+
 ## Cálculos de inventario (sin IA)
 
 En [app/inventory/engine.py](app/inventory/engine.py):
@@ -152,7 +198,7 @@ En [app/inventory/engine.py](app/inventory/engine.py):
 
 ## Tecnologías
 
-Python 3.12 · FastAPI · python-telegram-bot · PostgreSQL (Neon) · SQLAlchemy + Alembic · Grok (xAI) · rapidfuzz · Jinja2 + Chart.js · pytest
+Python 3.12 · FastAPI · python-telegram-bot · PostgreSQL (Neon) · SQLAlchemy + Alembic · Grok (xAI) · rapidfuzz · Jinja2 + Chart.js · pytest · Docker (solo la base de la semana de carga)
 
 ## Cómo correrlo
 
@@ -174,6 +220,7 @@ Con `BOT_MODE=polling` el bot funciona desde tu computador, sin desplegar nada.
 - **Administración:** crea tu cuenta con `python -m scripts.admin_user tu@correo.com` y entra a http://localhost:8000/login (el mismo login te lleva a `/admin`).
 - **Pruebas:** `python -m pytest`
 - **Evaluación:** `python -m scripts.run_eval` (corre contra Grok, cuesta unos US$0,06)
+- **Semana de carga:** ver [Semana de carga (S4)](#semana-de-carga-s4)
 
 ### Variables de entorno
 
@@ -187,6 +234,7 @@ Con `BOT_MODE=polling` el bot funciona desde tu computador, sin desplegar nada.
 | `GROK_BASE_URL` | Por defecto `https://api.reto.pltk.mx/v1` |
 | `GROK_MODEL` | Por defecto `grok-4.20-0309-non-reasoning` |
 | `AGENT_ENABLED` | `true` (por defecto): agente con herramientas. `false`: extracción directa sin herramientas |
+| `LOAD_DATABASE_URL` | Base de la semana de carga (S4). Por defecto, el PostgreSQL local de `docker-compose.carga.yml`. Nunca la misma que `DATABASE_URL` |
 | `SESSION_SECRET` | Firma de la sesión del panel |
 | `PANEL_EMAIL`, `PANEL_PASSWORD` | Cuenta del panel que crea el seed (contraseña de 12 caracteres o más) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Correo de respaldo para tenderos que no abren el bot (gratis con Gmail y una contraseña de aplicación). Vacíos = no se mandan correos. |
@@ -206,8 +254,11 @@ Las claves van solo en `.env`, que está en `.gitignore`. Nunca se suben al repo
 - **Semana 1, flujo de punta a punta:** listo. El agente recibe voz, texto o foto, llama a Grok, procesa la respuesta y entrega un resultado (resumen para confirmar, inventario, alertas y pedido).
 - **Semana 2, Grok por la pasarela y herramientas:** listo. Agente con tool calling y 6 herramientas.
 - **Semana 3, evaluación y costo:** set propio de 54 casos con resultados, bitácora de consumo y costo por tarea resuelta. Faltan los casos con audios y fotos reales.
+- **Semana 4, carga de 12 horas:** en curso. Están listos el generador de 1.500 mensajes, la base aparte, el trabajador desatendido y la bitácora, y se probaron con una corrida corta contra Grok. Faltan la prueba piloto y la corrida de 12 horas.
 
 **Pendiente:**
+
+- Prueba piloto, prueba de recuperación y corrida de 12 horas de la semana de carga.
 
 - Casos de evaluación con audios, fotos y mensajes reales de tenderos.
 - Unidad de venta por producto en el catálogo (para *"vendí 10 huevos"*).
