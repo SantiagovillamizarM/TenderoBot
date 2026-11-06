@@ -1,0 +1,24 @@
+# PostgreSQL local para la semana de carga (S4). Separada de la base real (Neon).
+#   docker compose -f docker-compose.carga.yml up -d
+#   python -m scripts.load_db setup
+services:
+  carga-db:
+    image: postgres:16-alpine
+    container_name: tenderobot-carga-db
+    environment:
+      POSTGRES_USER: carga
+      POSTGRES_PASSWORD: carga
+      POSTGRES_DB: tenderobot_carga
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - carga-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carga -d tenderobot_carga"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  carga-data:
