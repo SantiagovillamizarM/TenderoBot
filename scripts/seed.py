@@ -31,6 +31,7 @@ from app.models import (
     SuggestedOrder,
     SuggestedOrderItem,
 )
+from app.roles import email_role, other_role_error
 from app.web.auth import password_problem
 
 DISTRIBUTOR_NAME = "Distribuidora El Barrio"
@@ -218,8 +219,16 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
+class SeedError(Exception):
+    pass
+
+
 async def seed(session: AsyncSession, demo_history: bool = False) -> None:
     settings = get_settings()
+    # Un papel por correo: la cuenta del panel no puede ser de un administrador ni de un tendero.
+    problem = other_role_error(await email_role(session, settings.panel_email), "provider")
+    if problem:
+        raise SeedError(f"PANEL_EMAIL: {problem}")
     existing = await session.scalar(select(Distributor).where(Distributor.name == DISTRIBUTOR_NAME))
     if existing is not None:
         store_ids = list(
@@ -303,9 +312,13 @@ async def main() -> None:
     problem = problem or password_problem(settings.panel_password)
     if problem:
         raise SystemExit(f"No se cargó nada. {problem} Pon PANEL_EMAIL y PANEL_PASSWORD en el .env.")
-    async with SessionLocal() as session:
-        await seed(session, demo_history=args.demo)
-    await engine.dispose()
+    try:
+        async with SessionLocal() as session:
+            await seed(session, demo_history=args.demo)
+    except SeedError as exc:
+        raise SystemExit(f"No se cargó nada. {exc}") from exc
+    finally:
+        await engine.dispose()
     history = f"{HISTORY_DAYS} días de historia de prueba" if args.demo else "sin ventas"
     print(f"Listo: panel {settings.panel_email} / {len(STORES)} tiendas sin vincular / {len(PRODUCTS)} productos / {history}")
 

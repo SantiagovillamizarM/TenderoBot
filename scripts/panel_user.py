@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 
 from app.db import SessionLocal, engine
 from app.models import DistributorUser
+from app.roles import email_role, other_role_error
 from app.web.auth import MIN_PASSWORD_LENGTH, password_problem
 from app.web.catalog import FormError
 from app.web.store_forms import parse_email
@@ -58,6 +59,9 @@ async def main() -> None:
         )
         if taken is not None:
             raise SystemExit("Ese correo ya es de otra cuenta del panel.")
+        problem = other_role_error(await email_role(session, email), "provider")
+        if problem:
+            raise SystemExit(problem)
         password = ask_password()
         previous = user.email
         user.email = email

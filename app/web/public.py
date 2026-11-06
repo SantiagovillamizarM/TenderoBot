@@ -9,13 +9,14 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import AdminUser, Distributor, DistributorRequest, DistributorUser, Store, StoreRequest
+from app.models import Distributor, DistributorRequest, DistributorUser, Store, StoreRequest
 from app.providers import CATEGORIES
+from app.roles import ROLE_ERRORS, email_role
 from app.onboarding import bot_link
 from app.web.auth import LoginRateLimiter, client_ip
 from app.web.catalog import FormError
@@ -46,37 +47,6 @@ def bot_username(request: Request) -> str | None:
         return telegram_app.bot.username if telegram_app is not None else None
     except RuntimeError:
         return None  # el bot aún no se inicializa
-
-
-ROLE_ERRORS = {
-    "admin": "Ese correo es de una cuenta de administrador de TenderoBot. Usa otro correo.",
-    "provider": "Ese correo es de un proveedor. Para pedir acceso como tendero, usa otro correo.",
-    "tendero": "Ese correo es de un tendero. Para registrar una empresa proveedora, usa otro correo.",
-}
-
-
-async def email_role(session: AsyncSession, email: str) -> str | None:
-    """Qué es este correo en TenderoBot. Cada correo tiene un solo papel: administrador, proveedor o tendero.
-
-    Una solicitud rechazada no cuenta: puede volver a intentarlo.
-    """
-    if await session.scalar(select(AdminUser.id).where(func.lower(AdminUser.email) == email)):
-        return "admin"
-    if await session.scalar(select(DistributorUser.id).where(func.lower(DistributorUser.email) == email)) or (
-        await session.scalar(
-            select(DistributorRequest.id).where(
-                DistributorRequest.contact_email == email, DistributorRequest.status.in_(("pending", "approved"))
-            )
-        )
-    ):
-        return "provider"
-    if await session.scalar(select(Store.id).where(func.lower(Store.email) == email)) or (
-        await session.scalar(
-            select(StoreRequest.id).where(StoreRequest.email == email, StoreRequest.status.in_(("pending", "approved")))
-        )
-    ):
-        return "tendero"
-    return None
 
 
 def _redirect(path: str) -> RedirectResponse:

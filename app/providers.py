@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Distributor, DistributorUser, PasswordToken, Product, Store
+from app.roles import email_role, other_role_error
 
 # Qué vende un proveedor. Las reguladas se marcan para que el administrador las revise con cuidado.
 CATEGORIES = {
@@ -106,6 +107,9 @@ async def add_user(session: AsyncSession, distributor_id: int, email: str) -> tu
     taken = await session.scalar(select(DistributorUser.id).where(DistributorUser.email == email))
     if taken is not None:
         raise ProviderError("Ese correo ya tiene una cuenta en el panel.")
+    problem = other_role_error(await email_role(session, email), "provider")
+    if problem:
+        raise ProviderError(problem)
     user = DistributorUser(distributor_id=distributor_id, email=email, password_hash=_unusable_hash())
     session.add(user)
     await session.flush()
