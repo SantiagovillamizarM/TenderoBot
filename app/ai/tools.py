@@ -8,6 +8,8 @@ Ninguna herramienta guarda ventas ni envía pedidos: solo crea borradores. El te
 confirma con un botón.
 """
 
+import re
+import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -18,6 +20,22 @@ from app.ai.matching import match_order_changes, match_sale_lines, resolve_sku, 
 from app.schemas import OrderChange, SaleLine
 
 MAX_LINES = 30
+
+# "x 30", "x 4": el producto se vende en paquete (cubeta, paca...).
+PACK_PATTERN = re.compile(r"^\s*x\s*(\d+)", re.IGNORECASE)
+# Palabras de unidades sueltas: si aparecen con un producto de paquete, hay que preguntar.
+LOOSE_WORDS = ("suelt", "docena")
+
+
+def fold(text: str) -> str:
+    """Minúsculas, sin tildes y con espacios simples, para comparar con lo que escribió el tendero."""
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    return " ".join("".join(ch for ch in normalized if not unicodedata.combining(ch)).split())
+
+
+def pack_size(product: dict) -> int:
+    match = PACK_PATTERN.match(str(product.get("presentation") or ""))
+    return int(match.group(1)) if match else 1
 
 
 @dataclass
@@ -81,7 +99,9 @@ def _not_found(text: str, catalog: list[dict]) -> dict:
     }
 
 
-def build_tools(actions: StoreActions) -> list[Tool]:
+def build_tools(actions: StoreActions, user_message: str | None = None) -> list[Tool]:
+    """`user_message` es lo que escribió (o dijo) el tendero: con él se verifica que la cantidad que
+    cita el modelo esté de verdad en el mensaje. Sin él (pruebas), se confía en la cita."""
     catalog = actions.catalog
     names = {str(product["sku"]): product.get("name") for product in catalog}
 
@@ -103,29 +123,61 @@ def build_tools(actions: StoreActions) -> list[Tool]:
     async def ver_alertas(args: dict) -> dict:
         return await actions.alerts()
 
+    by_sku = {str(product["sku"]): product for product in catalog}
+
+    def needs_question(line: SaleLine, said_quantity: str) -> str | None:
+        """Por qué hay que preguntarle al tendero antes de registrar esta línea (None = se registra).
+
+        Lo decide el código, no el modelo: en la evaluación, con solo instrucciones, Grok a veces
+        asumía 1 cuando el tendero no dijo cuántas, o registraba huevos sueltos como cubetas.
+        """
+        if not said_quantity:
+            return "No dijo cuántas vendió"
+        if user_message is not None and fold(said_quantity) not in fold(user_message):
+            # El modelo citó una cantidad que el tendero no dijo ("una" cuando solo escribió "vendí pony").
+            return "No dijo cuántas vendió"
+        size = pack_size(by_sku.get(str(line.sku), {}))
+        said = f"{said_quantity} {line.product_text}".casefold()
+        if size > 1 and any(word in said for word in LOOSE_WORDS):
+            presentation = by_sku[str(line.sku)].get("presentation")
+            return f"Habla de unidades sueltas y el producto se vende en paquete ({presentation})"
+        return None
+
     async def registrar_ventas(args: dict) -> dict:
-        lines: list[SaleLine] = []
+        lines: list[tuple[SaleLine, str]] = []
         for item in _list_arg(args, "ventas"):
             try:
-                lines.append(
-                    SaleLine(
-                        sku=_sku_arg(item),
-                        product_text=str(item.get("producto") or "").strip(),
-                        quantity=item.get("cantidad"),
-                    )
+                line = SaleLine(
+                    sku=_sku_arg(item),
+                    product_text=str(item.get("producto") or "").strip(),
+                    quantity=item.get("cantidad"),
                 )
             except ValidationError as exc:
                 raise ToolError("Cada venta necesita 'producto' y 'cantidad' entera mayor que 0") from exc
-        lines = match_sale_lines(lines, catalog)
-        recognized = [line for line in lines if line.sku]
-        unknown = [line for line in lines if not line.sku]
+            said = item.get("texto_cantidad")
+            lines.append((line, said.strip() if isinstance(said, str) else ""))
+        matched = match_sale_lines([line for line, _said in lines], catalog)
+        recognized: list[SaleLine] = []
+        unknown: list[SaleLine] = []
+        to_ask: list[dict] = []
+        for line, (_original, said) in zip(matched, lines, strict=True):
+            if not line.sku:
+                unknown.append(line)
+            elif (reason := needs_question(line, said)) is not None:
+                to_ask.append({"producto": names.get(line.sku), "motivo": reason})
+            else:
+                recognized.append(line)
         result = await actions.draft_sales(recognized)
-        return {
+        reply = {
             **result,
             "reconocidas": [{"producto": names.get(line.sku), "cantidad": line.quantity} for line in recognized],
             "no_reconocidas": [_not_found(line.product_text, catalog) for line in unknown],
             "nota": "Aún no se guardó: el tendero debe pulsar ✅ Confirmar en el resumen.",
         }
+        if to_ask:
+            reply["preguntar"] = to_ask
+            reply["nota_preguntar"] = "Estas no se registraron: pregúntale al tendero antes de registrarlas."
+        return reply
 
     async def armar_pedido(args: dict) -> dict:
         return await actions.suggest_order()
@@ -183,7 +235,8 @@ def build_tools(actions: StoreActions) -> list[Tool]:
         Tool(
             "registrar_ventas",
             "Prepara un resumen de ventas para que el tendero lo confirme. Úsala cuando el tendero cuenta "
-            "lo que vendió, aunque no diga 'vendí' (ej. '2 coca litro y un pan'). No guarda nada sola.",
+            "lo que vendió, aunque no diga 'vendí' (ej. '2 coca litro y un pan'). Busca sola los productos "
+            "en el catálogo. No guarda nada sola. Si falta la cantidad, no la uses: primero pregúntale.",
             {
                 "type": "object",
                 "properties": {
@@ -193,10 +246,18 @@ def build_tools(actions: StoreActions) -> list[Tool]:
                             "type": "object",
                             "properties": {
                                 "producto": {"type": "string", "description": "Como lo dijo el tendero"},
-                                "cantidad": {"type": "integer", "description": "Unidades vendidas, mayor que 0"},
+                                "cantidad": {
+                                    "type": "integer",
+                                    "description": "Cantidad que dijo el tendero. Nunca la inventes",
+                                },
+                                "texto_cantidad": {
+                                    "type": "string",
+                                    "description": "Las palabras exactas con que el tendero dijo la cantidad "
+                                    "('2', 'una', 'cinco', 'media docena'). Vacío si no la dijo",
+                                },
                                 "sku": sku_field,
                             },
-                            "required": ["producto", "cantidad"],
+                            "required": ["producto", "cantidad", "texto_cantidad"],
                         },
                     }
                 },
@@ -236,7 +297,8 @@ def build_tools(actions: StoreActions) -> list[Tool]:
                                 "unidad": {
                                     "type": "string",
                                     "enum": ["case", "unit"],
-                                    "description": "case si habla de cajas o no dice; unit si habla de unidades sueltas",
+                                    "description": "case si dice cajas o no dice número ('agrega coca'); unit si "
+                                    "cuenta el producto por unidades ('12 cocas', '6 leches')",
                                 },
                                 "sku": sku_field,
                             },

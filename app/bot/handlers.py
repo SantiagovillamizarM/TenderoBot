@@ -982,7 +982,7 @@ async def answer_with_agent(
     shown: dict[str, BotMessage] = {}
     actions = store_actions(store_id, products, source, shown)
     try:
-        result: AgentResult | None = await run_agent(text, build_tools(actions), AGENT_SYSTEM_PROMPT)
+        result: AgentResult | None = await run_agent(text, build_tools(actions, user_message=text), AGENT_SYSTEM_PROMPT)
     except Exception:
         logger.warning("El agente falló (Grok no respondió)")
         result = None

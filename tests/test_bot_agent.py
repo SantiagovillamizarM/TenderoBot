@@ -87,7 +87,7 @@ def test_agent_catalog_marks_sold_out_and_prices():
 @pytest.mark.asyncio
 async def test_sales_reply_then_summary_with_buttons(bot, monkeypatch):
     async def behaviour(tools):
-        await tools["registrar_ventas"].run({"ventas": [{"producto": "coca litro", "cantidad": 2}]})
+        await tools["registrar_ventas"].run({"ventas": [{"producto": "coca litro", "cantidad": 2, "texto_cantidad": "2"}]})
         return "Revisa el resumen y confirma."
 
     fake_agent(monkeypatch, behaviour)
@@ -106,12 +106,12 @@ async def test_sales_reply_then_summary_with_buttons(bot, monkeypatch):
 @pytest.mark.asyncio
 async def test_only_last_draft_of_each_kind_is_shown(bot, monkeypatch):
     async def behaviour(tools):
-        await tools["registrar_ventas"].run({"ventas": [{"producto": "coca", "cantidad": 1}]})
-        await tools["registrar_ventas"].run({"ventas": [{"producto": "coca", "cantidad": 3}]})
+        await tools["registrar_ventas"].run({"ventas": [{"producto": "coca", "cantidad": 1, "texto_cantidad": "1"}]})
+        await tools["registrar_ventas"].run({"ventas": [{"producto": "coca", "cantidad": 3, "texto_cantidad": "3"}]})
         return ""
 
     fake_agent(monkeypatch, behaviour)
-    await handlers.answer_with_agent(None, 7, 1, "x", "text", [COCA])
+    await handlers.answer_with_agent(None, 7, 1, "vendí 1 coca, no, mejor 3 coca", "text", [COCA])
     assert len(bot.replies) == 1
     assert "• 3 Coca-Cola 1 litro" in bot.replies[0][0]
 
@@ -121,7 +121,7 @@ async def test_unrecognized_sales_do_not_create_draft(bot, monkeypatch):
     seen = {}
 
     async def behaviour(tools):
-        seen["result"] = await tools["registrar_ventas"].run({"ventas": [{"producto": "tornillos", "cantidad": 1}]})
+        seen["result"] = await tools["registrar_ventas"].run({"ventas": [{"producto": "tornillos", "cantidad": 1, "texto_cantidad": "1"}]})
         return "No encontré tornillos en tu catálogo."
 
     fake_agent(monkeypatch, behaviour)
@@ -165,11 +165,11 @@ async def test_agent_failure_before_any_action_uses_fallback(bot, monkeypatch):
 async def test_agent_failure_after_draft_still_shows_it(bot, monkeypatch):
     async def half(text, tools, system_prompt):
         by_name = {tool.name: tool for tool in tools}
-        await by_name["registrar_ventas"].run({"ventas": [{"producto": "coca", "cantidad": 2}]})
+        await by_name["registrar_ventas"].run({"ventas": [{"producto": "coca", "cantidad": 2, "texto_cantidad": "2"}]})
         raise RuntimeError("se cayó en la segunda vuelta")
 
     monkeypatch.setattr(handlers, "run_agent", half)
-    assert await handlers.answer_with_agent(None, 7, 1, "x", "text", [COCA]) is True
+    assert await handlers.answer_with_agent(None, 7, 1, "vendí 2 coca litro", "text", [COCA]) is True
     assert len(bot.replies) == 1 and bot.replies[0][0].startswith("¿Confirmas estas ventas?")
 
 

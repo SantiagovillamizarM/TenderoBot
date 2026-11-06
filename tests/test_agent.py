@@ -163,7 +163,12 @@ async def test_registrar_ventas_matches_and_only_drafts_recognized_lines():
     actions = make_actions()
     tools = tools_by_name(actions)
     result = await tools["registrar_ventas"].run(
-        {"ventas": [{"producto": "coca litro", "cantidad": 2}, {"producto": "tornillos", "cantidad": 1}]}
+        {
+            "ventas": [
+                {"producto": "coca litro", "cantidad": 2, "texto_cantidad": "2"},
+                {"producto": "tornillos", "cantidad": 1, "texto_cantidad": "1"},
+            ]
+        }
     )
     drafted = actions.draft_sales.call_args.args[0]
     assert [(line.sku, line.quantity) for line in drafted] == [("GAS-COCA-1L", 2)]
@@ -175,7 +180,7 @@ async def test_registrar_ventas_matches_and_only_drafts_recognized_lines():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "args",
-    [{}, {"ventas": []}, {"ventas": [{"producto": "coca", "cantidad": 0}]}, {"ventas": ["coca"]}],
+    [{}, {"ventas": []}, {"ventas": [{"producto": "coca", "cantidad": 0, "texto_cantidad": "0"}]}, {"ventas": ["coca"]}],
 )
 async def test_registrar_ventas_rejects_invalid_arguments(args):
     actions = make_actions()
@@ -216,9 +221,95 @@ async def test_ajustar_pedido_rejects_unknown_action():
 @pytest.mark.asyncio
 async def test_full_turn_sale_message_creates_draft():
     actions = make_actions()
-    call = tool_call("registrar_ventas", {"ventas": [{"producto": "coca litro", "cantidad": 2}]})
+    call = tool_call("registrar_ventas", {"ventas": [{"producto": "coca litro", "cantidad": 2, "texto_cantidad": "2"}]})
     with patch_chat(assistant(calls=[call]), assistant("Revisa y confirma.")):
         result = await run_agent("vendí 2 coca litro", build_tools(actions), "sistema")
     assert result.called("registrar_ventas")
     assert result.reply == "Revisa y confirma."
     actions.draft_sales.assert_awaited_once()
+
+
+# --- Reglas que hace cumplir el código (no el modelo) ---------------------------
+
+EGGS = {
+    "sku": "HUE-AAA-30",
+    "name": "Huevos AAA x 30",
+    "aliases": "huevos,huevo,cubeta",
+    "presentation": "x 30",
+    "unit_price": 18000,
+    "units_per_case": 1,
+    "sold_out": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_sale_without_said_quantity_is_not_drafted():
+    actions = make_actions()
+    result = await tools_by_name(actions)["registrar_ventas"].run(
+        {
+            "ventas": [
+                {"producto": "coca litro", "cantidad": 1, "texto_cantidad": ""},
+                {"producto": "pan", "cantidad": 2, "texto_cantidad": "dos"},
+            ]
+        }
+    )
+    drafted = actions.draft_sales.call_args.args[0]
+    assert [(line.sku, line.quantity) for line in drafted] == [("PAN-TAJA-UND", 2)]
+    assert result["preguntar"] == [{"producto": "Coca-Cola 1 litro", "motivo": "No dijo cuántas vendió"}]
+
+
+@pytest.mark.asyncio
+async def test_missing_said_quantity_field_counts_as_not_said():
+    actions = make_actions()
+    result = await tools_by_name(actions)["registrar_ventas"].run({"ventas": [{"producto": "coca", "cantidad": 1}]})
+    assert actions.draft_sales.call_args.args[0] == []
+    assert result["preguntar"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"producto": "huevos sueltos", "cantidad": 6, "texto_cantidad": "6"},
+        {"producto": "huevos", "cantidad": 6, "texto_cantidad": "media docena"},
+    ],
+)
+async def test_loose_units_of_a_pack_are_not_drafted(item):
+    actions = make_actions(catalog=CATALOG + [EGGS])
+    result = await tools_by_name(actions)["registrar_ventas"].run({"ventas": [item]})
+    assert actions.draft_sales.call_args.args[0] == []
+    assert "paquete (x 30)" in result["preguntar"][0]["motivo"]
+
+
+@pytest.mark.asyncio
+async def test_whole_packs_and_single_products_are_drafted():
+    actions = make_actions(catalog=CATALOG + [EGGS])
+    await tools_by_name(actions)["registrar_ventas"].run(
+        {
+            "ventas": [
+                {"producto": "cubetas de huevos", "cantidad": 2, "texto_cantidad": "2"},
+                # "Docena" con un producto que no es de paquete no se bloquea.
+                {"producto": "pan", "cantidad": 12, "texto_cantidad": "una docena"},
+            ]
+        }
+    )
+    drafted = actions.draft_sales.call_args.args[0]
+    assert [(line.sku, line.quantity) for line in drafted] == [("HUE-AAA-30", 2), ("PAN-TAJA-UND", 12)]
+
+
+@pytest.mark.asyncio
+async def test_quoted_quantity_must_appear_in_the_message():
+    actions = make_actions()
+    tools = {tool.name: tool for tool in build_tools(actions, user_message="Vendí pan y DOS cocas litro")}
+    result = await tools["registrar_ventas"].run(
+        {
+            "ventas": [
+                # El modelo inventó "una": el tendero no la dijo.
+                {"producto": "pan", "cantidad": 1, "texto_cantidad": "una"},
+                {"producto": "coca litro", "cantidad": 2, "texto_cantidad": "dos"},
+            ]
+        }
+    )
+    drafted = actions.draft_sales.call_args.args[0]
+    assert [(line.sku, line.quantity) for line in drafted] == [("GAS-COCA-1L", 2)]
+    assert result["preguntar"][0]["producto"] == "Pan tajado"

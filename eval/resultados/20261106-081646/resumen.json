@@ -1,0 +1,111 @@
+{
+  "fecha": "2026-11-06T08:16:46",
+  "modelo": "grok-4.20-0309-non-reasoning",
+  "casos": 54,
+  "ejecutados": 48,
+  "omitidos": 6,
+  "pasaron": 47,
+  "errores": 0,
+  "acierto": 0.9791666666666666,
+  "por_origen": {
+    "redactado": 48
+  },
+  "costo_total_usd": 0.05763875,
+  "costo_por_tarea_usd": 0.0012008072916666666,
+  "costo_por_tarea_resuelta_usd": 0.0012263563829787234,
+  "costo_incompleto": [],
+  "tokens_promedio": {
+    "tokens_entrada": 3019.9375,
+    "tokens_cache": 2600,
+    "tokens_salida": 62.354166666666664,
+    "llamadas": 1.8958333333333333
+  },
+  "segundos_p50": 2.1,
+  "segundos_p95": 2.96,
+  "trm": 4000.0,
+  "mensajes_por_dia": 20,
+  "costo_mensual_tienda_usd": 0.720484375,
+  "por_categoria": {
+    "consulta": {
+      "casos": 6,
+      "pasaron": 6,
+      "costo_usd": 0.0086902,
+      "segundos": 10.729999999999999,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.0014483666666666667,
+      "segundos_promedio": 1.788333333333333
+    },
+    "consulta_dificil": {
+      "casos": 1,
+      "pasaron": 1,
+      "costo_usd": 0.00096315,
+      "segundos": 2.0,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.00096315,
+      "segundos_promedio": 2.0
+    },
+    "conversacion": {
+      "casos": 2,
+      "pasaron": 2,
+      "costo_usd": 0.0010257,
+      "segundos": 2.5300000000000002,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.00051285,
+      "segundos_promedio": 1.2650000000000001
+    },
+    "fuera_de_tema": {
+      "casos": 1,
+      "pasaron": 1,
+      "costo_usd": 0.0005241,
+      "segundos": 1.31,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.0005241,
+      "segundos_promedio": 1.31
+    },
+    "pedido": {
+      "casos": 8,
+      "pasaron": 8,
+      "costo_usd": 0.00913755,
+      "segundos": 14.89,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.00114219375,
+      "segundos_promedio": 1.86125
+    },
+    "pedido_dificil": {
+      "casos": 2,
+      "pasaron": 2,
+      "costo_usd": 0.00210325,
+      "segundos": 4.38,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.001051625,
+      "segundos_promedio": 2.19
+    },
+    "seguridad": {
+      "casos": 2,
+      "pasaron": 2,
+      "costo_usd": 0.0013385,
+      "segundos": 3.05,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.00066925,
+      "segundos_promedio": 1.525
+    },
+    "ventas_dificil": {
+      "casos": 9,
+      "pasaron": 8,
+      "costo_usd": 0.011093,
+      "segundos": 17.909999999999997,
+      "acierto": 0.8888888888888888,
+      "costo_promedio_usd": 0.0012325555555555555,
+      "segundos_promedio": 1.9899999999999995
+    },
+    "ventas_texto": {
+      "casos": 17,
+      "pasaron": 17,
+      "costo_usd": 0.022763300000000004,
+      "segundos": 43.210000000000015,
+      "acierto": 1.0,
+      "costo_promedio_usd": 0.0013390176470588237,
+      "segundos_promedio": 2.541764705882354
+    }
+  }
+}

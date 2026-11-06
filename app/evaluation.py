@@ -188,7 +188,7 @@ async def run_case(case: dict, store: dict, base: Path) -> CaseResult:
                     observed.transcript = text
                 contexto = case.get("contexto") or {}
                 actions = fixed_store_actions(store, observed, order_open=bool(contexto.get("pedido_abierto")))
-                result = await run_agent(text, build_tools(actions), AGENT_SYSTEM_PROMPT)
+                result = await run_agent(text, build_tools(actions, user_message=text), AGENT_SYSTEM_PROMPT)
                 observed.tools = [call.name for call in result.tool_calls]
                 observed.reply = result.reply
                 observed.finished = result.finished

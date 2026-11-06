@@ -4,6 +4,9 @@ from app.schemas import OrderChange, SaleLine, StockLine
 
 MATCH_THRESHOLD = 80
 
+# Palabras que el tendero agrega y que no ayudan a encontrar el producto ("unas cocas de litro").
+FILLER_WORDS = {"de", "del", "la", "las", "el", "los", "un", "una", "unos", "unas"}
+
 
 def catalog_by_sku(products: list[dict]) -> dict[str, dict]:
     mapping: dict[str, dict] = {}
@@ -29,11 +32,34 @@ def product_terms(product: dict) -> list[str]:
     return terms
 
 
+def _singular(word: str) -> str:
+    """Plural sencillo: "cocas" -> "coca", "leches" -> "leche". Las palabras cortas no se tocan."""
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
+
+
+def query_variants(query: str) -> list[str]:
+    """Lo que dijo el tendero y, si cambia, la misma frase sin plurales ni palabras de relleno."""
+    words = [_singular(word) for word in query.casefold().split() if word not in FILLER_WORDS]
+    normalized = " ".join(words)
+    return [query] if not normalized or normalized == query.casefold() else [query, normalized]
+
+
+def product_score(variants: list[str], terms: list[str], cutoff: float) -> float | None:
+    """El mejor parecido entre las formas de la frase y los nombres del producto (None si no llega al mínimo)."""
+    best: float | None = None
+    for variant in variants:
+        result = process.extractOne(variant, terms, scorer=fuzz.WRatio, score_cutoff=cutoff)
+        if result is not None and (best is None or result[1] > best):
+            best = result[1]
+    return best
+
+
 def best_product_match(query: str, products: list[dict]) -> dict | None:
     query = (query or "").strip()
     if not query or not products:
         return None
 
+    variants = query_variants(query)
     best: dict | None = None
     best_score = -1.0
     tied = False
@@ -41,15 +67,9 @@ def best_product_match(query: str, products: list[dict]) -> dict | None:
         terms = product_terms(product)
         if not terms:
             continue
-        result = process.extractOne(
-            query,
-            terms,
-            scorer=fuzz.WRatio,
-            score_cutoff=MATCH_THRESHOLD,
-        )
-        if result is None:
+        score = product_score(variants, terms, MATCH_THRESHOLD)
+        if score is None:
             continue
-        _match, score, _index = result
         product_sku = str(product.get("sku") or "")
         best_sku = str(best.get("sku") or "") if best is not None else ""
         if score > best_score:
@@ -71,14 +91,15 @@ def search_products(query: str, products: list[dict], limit: int = 3) -> list[di
     query = (query or "").strip()
     if not query:
         return []
+    variants = query_variants(query)
     scored: list[tuple[float, dict]] = []
     for product in products:
         terms = product_terms(product)
         if not terms:
             continue
-        result = process.extractOne(query, terms, scorer=fuzz.WRatio, score_cutoff=SUGGESTION_THRESHOLD)
-        if result is not None:
-            scored.append((result[1], product))
+        score = product_score(variants, terms, SUGGESTION_THRESHOLD)
+        if score is not None:
+            scored.append((score, product))
     scored.sort(key=lambda item: item[0], reverse=True)
     return [product for _score, product in scored[:limit]]
 
