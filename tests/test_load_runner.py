@@ -100,3 +100,32 @@ def test_resolve_expected_reads_current_stock():
 
 def test_worker_uses_the_seed_distributor():
     assert LOAD_DISTRIBUTOR == DISTRIBUTOR_NAME
+
+
+def test_compare_by_item_accepts_any_provider_of_the_same_item():
+    from app.load.runner import compare_by_item
+
+    # "ARR-BARRIO" (El Barrio) y "ARR-MAY" (Mayorista) son el mismo artículo i1.
+    item_of = {"ARR-BARRIO": "i1", "ARR-MAY": "i1", "COCA": "i2"}.get
+    expected = {"ventas": [{"sku": "ARR-BARRIO", "cantidad": 2}], "cambios": [{"sku": "COCA", "accion": "add",
+                                                                              "cantidad": 1}],
+                "stock_de": "ARR-BARRIO", "herramientas": ["registrar_ventas"]}
+    observed = Observed(sales=[("ARR-MAY", 2)], changes=[("COCA", "add", 1, "case")])
+    translated, compared = compare_by_item(expected, observed, lambda sku: item_of(sku, sku))
+    assert translated["ventas"] == [{"sku": "i1", "cantidad": 2}] and translated["stock_de"] == "i1"
+    assert compared.sales == [("i1", 2)] and compared.changes == [("i2", "add", 1, "case")]
+    assert observed.sales == [("ARR-MAY", 2)]  # lo observado original no cambia (se guarda tal cual)
+    assert expected["ventas"][0]["sku"] == "ARR-BARRIO"
+
+
+def test_item_lookup_maps_store_keys_and_original_codes():
+    from types import SimpleNamespace
+
+    from app.catalog_merge import Item, Offer
+    from app.load.worker import item_lookup
+
+    barrio = SimpleNamespace(id=1, sku="ARR", distributor_id=10)
+    mayorista = SimpleNamespace(id=2, sku="ARR", distributor_id=20)  # mismo código en otro proveedor
+    item = Item(offers=[Offer(barrio, 10, "El Barrio"), Offer(mayorista, 20, "Mayorista")])
+    lookup = item_lookup([item], [mayorista])
+    assert lookup("ARR") == item.key and lookup("desconocido") == "desconocido"

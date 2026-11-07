@@ -41,7 +41,7 @@
             </div>
           </td>
           <td>{% if row.linked %}<span class="badge badge-ok">Vinculada</span>{% else %}<span class="badge badge-muted">Sin vincular</span><br><span class="muted small">{% if row.store.owner_phone %}Celular {{ row.store.owner_phone|phone }}{% else %}Sin celular registrado{% endif %}</span>{% endif %}</td>
-          <td>{{ row.delivery_days|capitalize }}{% if not row.store.delivery_days_set_at %} <span class="muted small">(sin confirmar)</span>{% endif %}</td>
+          <td>{{ row.delivery_days|capitalize }}{% if not row.days_confirmed %} <span class="muted small">(sin confirmar)</span>{% endif %}</td>
           <td class="num">{% if row.at_risk %}<span class="badge badge-risk">{{ row.at_risk }}</span>{% else %}<span class="muted">0</span>{% endif %}</td>
           <td class="num">{% if row.stagnant %}<span class="badge badge-stale">{{ row.stagnant }}</span>{% else %}<span class="muted">0</span>{% endif %}</td>
           <td class="num"><strong>{{ row.order_total|cop }}</strong></td>

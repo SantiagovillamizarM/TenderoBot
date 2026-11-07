@@ -1,0 +1,5 @@
+2026-11-07 11:41:47,088 INFO __main__: Corrida «prueba-multi»: 4 unidades, una cada 1.0 s, modelo grok-4.20-0309-non-reasoning. Bitácora de texto en carga\logs\prueba-multi.log
+2026-11-07 11:41:50,415 INFO carga: M01 exito   venta | vendí 2 arroz diana y 3 aguas cristal 
+2026-11-07 11:41:51,872 INFO carga: M02 exito   consulta | cuánto me queda de arroz diana 
+2026-11-07 11:41:53,523 INFO carga: M03 exito   venta | salieron un aceite gourmet y 4 pony 
+2026-11-07 11:41:55,139 INFO carga: M04 exito   consulta | quién me vende más barato el aceite gourmet? 

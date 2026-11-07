@@ -8,6 +8,7 @@
 """
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 import httpx
@@ -98,3 +99,22 @@ def resolve_expected(expected: dict, stock_by_sku: dict[str, int]) -> dict:
             raise KeyError(f"la tienda no tiene el producto {sku}")
         resolved["respuesta_contiene"] = list(resolved.get("respuesta_contiene", [])) + [str(stock_by_sku[sku])]
     return resolved
+
+
+def compare_by_item(expected: dict, observed: Observed, item_of: Callable[[str], str]) -> tuple[dict, Observed]:
+    """Lo esperado y lo observado, con cada código cambiado por su artículo.
+
+    Con varios proveedores, una venta de "arroz Diana" puede quedar con el producto de El Barrio o con
+    el del Mayorista (el preferido de esa tienda): las dos son correctas si son el mismo artículo.
+    """
+    translated = dict(expected)
+    for key in ("ventas", "cambios"):
+        if key in translated:
+            translated[key] = [{**row, "sku": item_of(row["sku"])} for row in translated[key]]
+    if "stock_de" in translated:
+        translated["stock_de"] = item_of(translated["stock_de"])
+    return translated, replace(
+        observed,
+        sales=[(item_of(sku), quantity) for sku, quantity in observed.sales],
+        changes=[(item_of(sku), action, quantity, unit) for sku, action, quantity, unit in observed.changes],
+    )

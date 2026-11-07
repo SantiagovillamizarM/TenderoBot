@@ -30,6 +30,8 @@ from app.models import (
     Store,
     SuggestedOrder,
     SuggestedOrderItem,
+    StoreSupplier,
+    SUPPLIER_APPROVED,
 )
 from app.roles import email_role, other_role_error
 from app.suppliers import mirror_store_link
@@ -73,6 +75,48 @@ PRODUCTS = [
     ("PAS-DORIA-250", "Pasta Doria 250 g", "pasta,espagueti,doria,fideo", "250 g", 20, 2200),
     ("ATU-VANC-170", "Atún Van Camps 170 g", "atun,atún,van camps,lata de atun", "170 g", 24, 6900),
 ]
+
+# Otros proveedores de la zona, para la demo de varios proveedores por tienda: venden algunos de los
+# mismos productos (con otro nombre y otro precio) y otros que El Barrio no tiene.
+# (sku, nombre, otros nombres, presentación, unidades por caja, precio por unidad)
+EXTRA_PROVIDERS = [
+    {
+        "name": "Postobón Santander",
+        "city": "Floridablanca",
+        "coverage": "Bucaramanga, Floridablanca, Girón, Piedecuesta",
+        "categories": "bebidas",
+        "route_weekdays": "2,4",
+        "products": [
+            ("POS-POST-15", "Gaseosa Postobón 1.5 L", "postobon,postobón litro y medio", "1.5 L", 12, 3800),
+            ("POS-COLO-400", "Colombiana 400 ml", "colombiana,kola", "400 ml", 24, 2300),
+            ("POS-MANZ-400", "Manzana Postobón 400 ml", "manzana,postobon manzana", "400 ml", 24, 2100),
+            ("POS-CRIS-600", "Agua Cristal x 600 ml", "agua,cristal,agua cristal", "600 ml", 24, 1700),
+            ("POS-COLO-15", "Colombiana 1.5 L", "colombiana grande,kola grande", "1.5 L", 12, 5200),
+            ("POS-HIT-500", "Jugo Hit 500 ml", "hit,jugo hit", "500 ml", 12, 2600),
+        ],
+    },
+    {
+        "name": "Mayorista La Economía",
+        "city": "Bucaramanga",
+        "coverage": "Bucaramanga, Floridablanca, Girón",
+        "categories": "abarrotes,aseo",
+        "route_weekdays": "1,5",
+        "products": [
+            ("MAY-ARR-DI500", "Arroz Diana x 500 gr", "arroz diana", "500 gr", 20, 2650),
+            ("MAY-ARR-ROA1K", "Arroz Roa 1 kg", "arroz roa,roa", "1 kg", 12, 4900),
+            ("MAY-ACE-GOU1L", "Aceite Gourmet 1 litro", "aceite gourmet", "1 L", 12, 11500),
+            ("MAY-AZU-MAN1K", "Azúcar Manuelita x 1 kg", "azucar,manuelita", "1 kg", 12, 4400),
+            ("MAY-ATU-VAN170", "Atún Van Camps 170 g", "atun,van camps", "170 g", 24, 7100),
+            ("MAY-FAB-500", "Fab en polvo 500 g", "fab,detergente", "500 g", 12, 6200),
+            ("MAY-SAL-REF1K", "Sal Refisal 1 kg", "sal,refisal", "1 kg", 20, 1700),
+            ("MAY-PAS-DOR250", "Pasta Doria 250 g", "pasta,doria", "250 g", 20, 2200),
+            ("MAY-LEN-500", "Lenteja 500 g", "lenteja,lentejas", "500 g", 20, 3200),
+            ("MAY-FRI-500", "Fríjol bola roja 500 g", "frijol,frijoles,frijol bola roja", "500 g", 20, 5800),
+        ],
+    },
+]
+# Esta tienda trabaja con los tres proveedores (para ver la comparación de precios y un pedido por proveedor).
+MULTI_PROVIDER_STORE = "Mini Market El Parque"
 
 # (nombre, dueño, días de ruta del proveedor, días de entrega iniciales,
 #  días de anticipación para pedir). Los días de entrega iniciales se usan hasta que el tendero
@@ -248,6 +292,13 @@ async def seed(session: AsyncSession, demo_history: bool = False) -> None:
         await session.execute(delete(DistributorUser).where(DistributorUser.distributor_id == existing.id))
         await session.delete(existing)
         await session.flush()
+    # Los otros proveedores de la demo (sus productos solo aparecen en las tiendas de la demo, ya borradas).
+    for extra in EXTRA_PROVIDERS:
+        old = await session.scalar(select(Distributor).where(Distributor.name == extra["name"]))
+        if old is not None:
+            await session.execute(delete(Product).where(Product.distributor_id == old.id))
+            await session.delete(old)
+    await session.flush()
 
     distributor = Distributor(
         name=DISTRIBUTOR_NAME,
@@ -304,6 +355,7 @@ async def seed(session: AsyncSession, demo_history: bool = False) -> None:
     # Cada tienda queda con su proveedor aceptado (tabla de proveedores de la tienda).
     for store in stores:
         await mirror_store_link(session, store)
+    await add_extra_providers(session, next(s for s in stores if s.name == MULTI_PROVIDER_STORE))
 
     if demo_history:
         today = datetime.now(timezone.utc).astimezone(COLOMBIA_TZ).date()
@@ -313,6 +365,27 @@ async def seed(session: AsyncSession, demo_history: bool = False) -> None:
             session.add_all(build_history(store, scale, products, today, rng))
 
     await session.commit()
+
+
+async def add_extra_providers(session: AsyncSession, multi_store: Store) -> None:
+    """Los otros proveedores de la zona, y una tienda que ya trabaja con los tres."""
+    now = datetime.now(timezone.utc)
+    for extra in EXTRA_PROVIDERS:
+        provider = Distributor(name=extra["name"], city=extra["city"], coverage=extra["coverage"],
+                               categories=extra["categories"])
+        session.add(provider)
+        await session.flush()
+        session.add_all(
+            Product(distributor_id=provider.id, sku=sku, name=name, aliases=aliases, presentation=presentation,
+                    units_per_case=units_per_case, unit_price=Decimal(price), active=True, available_units=None)
+            for sku, name, aliases, presentation, units_per_case, price in extra["products"]
+        )
+        session.add(StoreSupplier(
+            store_id=multi_store.id, distributor_id=provider.id, status=SUPPLIER_APPROVED,
+            route_weekdays=extra["route_weekdays"], visit_weekdays=extra["route_weekdays"], lead_time_days=1,
+            decided_at=now, decision_notified_at=now, delivery_days_set_at=now,
+        ))
+    await session.flush()
 
 
 async def main() -> None:

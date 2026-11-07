@@ -15,32 +15,34 @@ El tendero no lleva inventario porque le toma más tiempo del que tiene. Por eso
 
 | El tendero... | El agente... |
 |---|---|
-| Manda un audio o escribe *"vendí 2 Coca-Cola litro y un pan tajado"* | Entiende productos y cantidades, los busca en el catálogo y muestra un resumen. Solo guarda si el tendero pulsa ✅ Confirmar. |
+| Escribe `/start` y toca 📱 Compartir mi número | Telegram le manda al bot el número verificado de esa cuenta (no se puede escribir otro). Si el número ya es de una tienda, entra. Si no, **registra su tienda ahí mismo**: primero el permiso de datos (Ley 1581) y luego 8 preguntas (nombre, dueño, cédula o NIT, ciudad, barrio, dirección, horario de recibo y forma de pago) y la ubicación con el botón de Telegram. Sin códigos ni contraseñas. |
+| Escribe `/proveedores` | Le muestra los proveedores que llegan a su ciudad, con lo que venden. Marca los que quiera (puede varios) y a cada uno le llega una solicitud a su panel. Cuando un proveedor acepta, le avisa por Telegram y le pide escoger sus días de entrega con él; si rechaza, le cuenta el motivo. Puede volver a `/proveedores` para ver con quién trabaja y agregar más. |
+| Manda un audio o escribe *"vendí 2 Coca-Cola litro y un pan tajado"* | Entiende productos y cantidades, los busca en el catálogo de **todos** sus proveedores y muestra un resumen. Solo guarda si el tendero pulsa ✅ Confirmar. |
 | Manda una foto del estante | Estima cuántas unidades hay de cada producto, avisa que es una estimación y deja corregir antes de guardar. |
-| Escribe `/stock` | Muestra el inventario actual. |
-| Escribe `/alertas` | Dice qué se va a acabar y qué no se está vendiendo. |
-| Entra a la página de TenderoBot y llena **Pedir acceso** | Su distribuidor revisa la solicitud en el panel (datos y si la ruta llega a la tienda) y la aprueba o la rechaza con un motivo. Si el tendero ya abrió el bot, la respuesta le llega por Telegram; si no, por correo. |
-| Escribe `/start` y toca 📱 Compartir mi número | Telegram le manda al bot el número verificado de esa cuenta (no se puede escribir otro). Si es el celular que el distribuidor registró para la tienda, entra. Sin códigos ni contraseñas. |
-| Vincula su tienda por primera vez | Le pregunta qué días quiere recibir la mercancía, entre los días en que el proveedor pasa por su barrio. |
-| Escribe `/pedido` | Sugiere el pedido para la próxima entrega, en cajas, con el motivo de cada producto, el total en pesos y la hora límite para enviarlo. |
-| Responde *"quita el arroz"* o *"ponle 2 cajas más de coca"* (por texto o audio) | Ajusta el pedido. El tendero tiene la última palabra; el camión lleva solo lo que él envió. |
-| No ha pedido y se acerca la hora límite | Le manda un recordatorio automático: *"El jueves te llega mercancía. Tienes hasta hoy a las 6 p. m."* |
-| Escribe `/recibido` | Muestra lo que traía el pedido para confirmarlo. Si algo llegó incompleto, el tendero escribe lo que llegó de verdad (*"coca litro 8"*) y solo eso se suma al inventario. |
-| Escribe `/catalogo` | Muestra lo que tiene su proveedor, con precios y lo que está agotado. |
+| Escribe `/stock` o `/alertas` | Muestra el inventario actual, qué se va a acabar y qué no se está vendiendo. Un producto que venden dos proveedores es uno solo en la tienda: un solo stock. |
+| Pregunta *"¿quién me vende más barata la coca litro?"* | Compara los precios de sus proveedores. Cada producto se le pide al más barato con existencias, salvo que el tendero escoja otro: *"la coca pídesela a Postobón"*. |
+| Escribe `/catalogo` | Muestra lo que tienen todos sus proveedores, con el precio de cada uno, ⭐ en el que le pide y cuál es el más barato. |
+| Escribe `/pedido` | Arma **un pedido por proveedor** para su próxima entrega, en cajas, con el motivo de cada producto, el total en pesos y la hora límite de ese proveedor. Cada pedido se envía con su botón. |
+| Responde *"quita el arroz"* o *"ponle 2 cajas más de coca"* (por texto o audio) | Ajusta el pedido del proveedor de ese producto. El tendero tiene la última palabra; el camión lleva solo lo que él envió. |
+| No ha pedido y se acerca la hora límite | Le manda un recordatorio por cada proveedor: *"El jueves te llega mercancía de Postobón. Tienes hasta hoy a las 6 p. m."* |
+| Escribe `/recibido` | Muestra lo que traía el pedido (y de qué proveedor) para confirmarlo. Si algo llegó incompleto, el tendero escribe lo que llegó de verdad (*"coca litro 8"*) y solo eso se suma al inventario. |
 | Escribe `/salir` | Cierra la sesión de la tienda en ese chat (pide confirmación). Los datos se conservan; para volver a entrar basta con compartir el número otra vez. Si entra otra cuenta de Telegram, se le pide su propia autorización de datos. |
 | No usa el bot en 24 horas | Le avisa, de día, que la sesión sigue abierta, con botones para cerrarla o seguir. Un solo aviso hasta que vuelva a usar el bot. |
 
-La raíz del sitio (`/`) es la **página pública**: explica qué hace TenderoBot y tiene dos solicitudes, ambas después de confirmar el correo con un código: la de **tenderos** (la aprueba su proveedor) y la de **proveedores** (con NIT y dígito de verificación, matrícula mercantil, representante legal, cobertura y categorías; la aprueba el administrador).
+La raíz del sitio (`/`) es la **página pública**: explica qué hace TenderoBot. Los **tenderos** se registran en Telegram (la página los lleva al bot). Los **proveedores** piden entrar desde la página, después de confirmar su correo con un código (NIT y dígito de verificación, matrícula mercantil, representante legal, cobertura y categorías); los aprueba el administrador.
 
-Hay **un solo login** en `/login`: proveedores y administrador entran con correo y contraseña y cada uno llega a su panel; los tenderos usan el bot y, para ver su solicitud, un código al correo.
+Hay **un solo login** en `/login`: proveedores y administrador entran con correo y contraseña y cada uno llega a su panel. Cada correo tiene un solo papel (administrador, proveedor o tendero), también en los comandos que crean cuentas.
 
-El **administrador de TenderoBot** tiene su panel en `/admin`: aprueba o rechaza proveedores, los crea, edita, suspende o elimina, maneja sus cuentas (enlaces por correo para crear o cambiar la contraseña; el administrador nunca la conoce) y bloquea productos que no sean apropiados. Un proveedor suspendido no entra a su panel y sus tenderos no pueden usar el bot. La cuenta de administrador solo se crea por comando: `python -m scripts.admin_user tu@correo.com`.
+El **administrador de TenderoBot** tiene su panel en `/admin`: aprueba o rechaza proveedores, los crea, edita, suspende o elimina, maneja sus cuentas (enlaces por correo para crear o cambiar la contraseña; el administrador nunca la conoce) y bloquea productos que no sean apropiados. Un proveedor suspendido no entra a su panel y sus tenderos no pueden usar el bot. La cuenta de administrador solo se crea por comando: `python -m scripts.admin_user tu@correo.com` (con `--eliminar` se quita).
 
-El distribuidor tiene un **panel web** (`/panel`) con las **solicitudes** de tenderos nuevos (aprobar escogiendo los días de ruta, o rechazar con motivo), sus tiendas (también puede agregarlas a mano y editar sus datos), el resumen de sus tiendas, las alertas de cada una, el gráfico de ventas, la clasificación ABC y la demanda agregada de la próxima semana.
+El proveedor tiene un **panel web** (`/panel`):
 
-En **Productos** maneja su catálogo: agrega productos, cambia precios, actualiza cuántas unidades tiene y desactiva lo que ya no vende. Al hacer clic en un producto ve qué días de la semana se vende más (últimas 8 semanas), en todas sus tiendas o en una sola, y puede ampliar el gráfico a pantalla completa.
-- El bot solo sugiere y deja pedir lo que el distribuidor tiene, en cajas completas. Cuando el tendero envía un pedido, esas unidades se descuentan.
-- Cuando cambia un precio o llega un producto nuevo, los tenderos reciben un aviso por Telegram. No se les avisa nada más, para no llenarles el chat.
+- **Solicitudes:** las tiendas que lo escogieron en Telegram (aceptar con sus días de ruta y anticipación, o rechazar con motivo) y las que llegaron antes por la página.
+- **Tiendas:** las que trabajan con él, aunque también les compren a otros proveedores. **De cada tienda ve solo lo suyo:** sus productos (stock, alertas, ABC, ventas), su pedido sugerido con sus días y los pedidos que le hicieron. Nunca lo que la tienda le compra a otro proveedor. Los datos del tendero los edita solo su proveedor principal (el que la registró o el primero que la aceptó).
+- **Resumen, alertas, gráfico de ventas, clasificación ABC y demanda** de la próxima semana, con la misma regla.
+- **Productos:** maneja su catálogo (agrega productos, cambia precios, actualiza cuántas unidades tiene y desactiva lo que ya no vende). Al hacer clic en un producto ve qué días de la semana se vende más, en todas sus tiendas o en una sola.
+- El bot solo sugiere y deja pedir lo que el proveedor tiene, en cajas completas. Cuando el tendero envía un pedido, esas unidades se descuentan.
+- Cuando cambia un precio o llega un producto nuevo, las tiendas que trabajan con él reciben un aviso por Telegram.
 
 ## Cómo usa Grok
 
@@ -68,7 +70,9 @@ Foto ──► Grok con imagen (JSON con esquema) ──► conteo para confirma
 | `ver_alertas` | Qué se va a acabar antes de la próxima entrega y qué no se está vendiendo. |
 | `buscar_producto` | Precio, presentación y si está agotado donde el proveedor. |
 | `armar_pedido` | Arma el pedido sugerido para la próxima entrega y lo deja como borrador. |
-| `ajustar_pedido` | Agrega, quita o cambia productos del pedido que el tendero está revisando. |
+| `ajustar_pedido` | Agrega, quita o cambia productos del pedido que el tendero está revisando (el del proveedor de cada producto). |
+| `comparar_proveedores` | Precios de un producto entre los proveedores del tendero, o la lista de lo que se ahorra pidiéndole al más barato. |
+| `preferir_proveedor` | Cambia a qué proveedor se le pide un producto. Solo cuando el tendero lo pide. |
 
 - Ninguna herramienta guarda ventas ni envía pedidos: solo crean borradores. El tendero siempre confirma con un botón.
 - **Reglas que verifica el código, no el modelo.** Si el tendero no dijo cuántas unidades vendió, o habla de unidades sueltas o docenas de un producto que se vende en paquete, esa venta no se registra y el bot le pregunta. Grok tiene que citar las palabras con que el tendero dijo la cantidad (`texto_cantidad`), y la herramienta comprueba que esas palabras estén en el mensaje. Esto salió de la evaluación: con solo instrucciones, Grok a veces asumía 1 o inventaba la cita (ver [eval/resultados/HISTORIAL.md](eval/resultados/HISTORIAL.md)).
@@ -188,7 +192,8 @@ En [app/inventory/engine.py](app/inventory/engine.py):
 - **Stock actual** = último conteo + mercancía recibida − ventas desde ese conteo.
 - **Venta diaria** = promedio de los últimos 28 días.
 - **Días de cobertura** = stock actual ÷ venta diaria.
-- **Entregas:** el tendero escoge sus días de entrega. Un pedido alcanza una entrega si se envía antes de las 6 p. m., con los días de anticipación de la tienda (mínimo 1).
+- **Varios proveedores:** un producto que venden varios proveedores de la tienda (emparejados por nombre y presentación en [app/catalog_merge.py](app/catalog_merge.py)) es un solo artículo con un solo stock: ventas, conteos, recibos y pedidos de cualquiera de ellos se cuentan juntos. Se le pide a su proveedor preferido (el más barato con existencias, o el que escoja el tendero), y cada proveedor tiene su propio plan de pedido.
+- **Entregas:** con cada proveedor el tendero escoge sus días de entrega. Un pedido alcanza una entrega si se envía antes de las 6 p. m., con los días de anticipación de ese proveedor (mínimo 1).
 - **Horizonte** = días desde hoy hasta la entrega siguiente a la próxima entrega alcanzable (lo que se pide hoy debe durar hasta que llegue el pedido siguiente).
 - **Stock de seguridad** = 1,65 × desviación estándar de la venta diaria × √horizonte.
 - **Pedido** = venta diaria × horizonte + stock de seguridad − stock actual, redondeado hacia arriba a cajas completas.
@@ -207,14 +212,15 @@ Requisitos: Python 3.12, una base PostgreSQL (por ejemplo Neon), un bot creado e
 ```bash
 pip install -r requirements.txt
 cp .env.example .env        # llena TELEGRAM_BOT_TOKEN, DATABASE_URL, GROK_API_KEY, SESSION_SECRET
-alembic upgrade head        # crea las tablas
-python -m scripts.seed      # datos base: 1 distribuidor, 3 tiendas sin vincular, 30 productos (sin ventas)
+alembic upgrade head        # crea las tablas (o las pone al día)
+python -m scripts.seed      # datos base: 3 proveedores, 3 tiendas sin vincular (sin ventas; --demo inventa 60 días)
 uvicorn app.main:app --reload
 ```
 
 Con `BOT_MODE=polling` el bot funciona desde tu computador, sin desplegar nada.
 
-- **Bot:** pide acceso en http://localhost:8000 con tu celular y apruébalo en el panel (Solicitudes), o registra tu celular directamente (Tiendas → una tienda → Acceso al bot). Luego abre tu bot en Telegram, escribe `/start` y toca 📱 Compartir mi número.
+- **Bot:** abre tu bot en Telegram, escribe `/start` y toca 📱 Compartir mi número. Si tu número no es de ninguna tienda, registras la tuya ahí mismo y escoges proveedores con `/proveedores`; el proveedor te acepta en su panel (Solicitudes). También puedes registrar tu celular en una tienda que ya existe (Tiendas → una tienda → Acceso al bot).
+- **Proveedores de la demo:** el seed crea *Distribuidora El Barrio* (con la cuenta del panel de `PANEL_EMAIL`), *Postobón Santander* y *Mayorista La Economía*, que venden algunos de los mismos productos a otro precio. La tienda *Mini Market El Parque* trabaja con los tres. Para entrar al panel de los otros dos, créales una cuenta desde `/admin`.
 - **Datos reales:** el seed no inventa ventas, conteos ni pedidos. Todo lo que muestra el panel llega desde Telegram, y el panel se actualiza solo (indicador "En vivo"). Volver a correr el seed borra los datos del distribuidor, también los celulares registrados.
 - **Panel:** entra a http://localhost:8000/login con `PANEL_EMAIL` y `PANEL_PASSWORD` del `.env`. Para cambiarlos sin borrar datos: `python -m scripts.panel_user tu@correo.com` (pide la contraseña oculta). El login no deja entrar con contraseñas de prueba como `demo1234`.
 - **Administración:** crea tu cuenta con `python -m scripts.admin_user tu@correo.com` y entra a http://localhost:8000/login (el mismo login te lleva a `/admin`).
@@ -246,20 +252,20 @@ Las claves van solo en `.env`, que está en `.gitignore`. Nunca se suben al repo
 - La IA entiende al tendero y escoge la herramienta; ningún cálculo de inventario lo hace la IA.
 - Toda venta, conteo y pedido se confirma con botones antes de guardarse o enviarse.
 - Antes de usar el bot, el tendero acepta el tratamiento de sus datos personales (Ley 1581 de 2012).
-- Cada tienda y cada distribuidor ven solo sus propios datos.
+- Cada tienda ve solo sus datos, y cada proveedor ve de cada tienda solo sus productos y sus pedidos.
 - Las fotos y los audios se procesan y se descartan; no se guardan.
 
 ## Estado
 
 - **Semana 1, flujo de punta a punta:** listo. El agente recibe voz, texto o foto, llama a Grok, procesa la respuesta y entrega un resultado (resumen para confirmar, inventario, alertas y pedido).
-- **Semana 2, Grok por la pasarela y herramientas:** listo. Agente con tool calling y 6 herramientas.
+- **Semana 2, Grok por la pasarela y herramientas:** listo. Agente con tool calling (hoy 8 herramientas).
 - **Semana 3, evaluación y costo:** set propio de 54 casos con resultados, bitácora de consumo y costo por tarea resuelta. Faltan los casos con audios y fotos reales.
-- **Semana 4, carga de 12 horas:** en curso. Están listos el generador de 1.500 mensajes, la base aparte, el trabajador desatendido y la bitácora, y se probaron con una corrida corta contra Grok. Faltan la prueba piloto y la corrida de 12 horas.
+- **Semana 4, carga de 12 horas:** en curso. Están listos el generador de 1.500 mensajes, la base aparte, el trabajador desatendido y la bitácora, y se probaron con corridas cortas contra Grok (también en una tienda con tres proveedores). Faltan la prueba piloto y la corrida de 12 horas.
+- **Varios proveedores por tienda:** listo. Registro de la tienda en Telegram, `/proveedores` (escoger, enviar solicitudes, avisos de aceptación o rechazo), catálogo junto con precios comparados y proveedor preferido, un pedido por proveedor, y el panel de cada proveedor con solo sus datos. La evaluación sigue en 47/48.
 
 **Pendiente:**
 
 - Prueba piloto, prueba de recuperación y corrida de 12 horas de la semana de carga.
-
 - Casos de evaluación con audios, fotos y mensajes reales de tenderos.
 - Unidad de venta por producto en el catálogo (para *"vendí 10 huevos"*).
 - Despliegue con Docker en Render y UptimeRobot para que no se apague.

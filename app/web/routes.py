@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -34,6 +35,7 @@ from app.models import (
     SuggestedOrderItem,
     StoreSupplier,
     SUPPLIER_PENDING,
+    SUPPLIER_APPROVED,
 )
 from app.bot.supplier_notify import notify_supplier_decision
 from app.suppliers import approve_supplier, mirror_store_link, reject_supplier
@@ -90,18 +92,65 @@ templates.env.globals["parse_days"] = parse_visit_weekdays
 router = APIRouter(prefix="/panel")
 
 
+def _served_store_ids(distributor_id: int):
+    """Tiendas que trabajan con este proveedor: lo aceptaron (o es su proveedor principal)."""
+    return (
+        select(StoreSupplier.store_id)
+        .where(StoreSupplier.distributor_id == distributor_id, StoreSupplier.status == SUPPLIER_APPROVED)
+        .union(select(Store.id).where(Store.distributor_id == distributor_id))
+    )
+
+
 async def _distributor_stores(session: AsyncSession, distributor_id: int) -> list[Store]:
-    result = await session.scalars(select(Store).where(Store.distributor_id == distributor_id).order_by(Store.name))
+    result = await session.scalars(
+        select(Store).where(Store.id.in_(_served_store_ids(distributor_id))).order_by(Store.name)
+    )
     return list(result.all())
 
 
-async def _analyses(session: AsyncSession, stores: list[Store]) -> list[StoreAnalysis]:
+async def _serves(session: AsyncSession, distributor_id: int, store: Store | None) -> bool:
+    if store is None:
+        return False
+    if store.distributor_id == distributor_id:
+        return True
+    return await session.scalar(
+        select(StoreSupplier.id).where(
+            StoreSupplier.store_id == store.id,
+            StoreSupplier.distributor_id == distributor_id,
+            StoreSupplier.status == SUPPLIER_APPROVED,
+        )
+    ) is not None
+
+
+async def _own_product_ids(session: AsyncSession, distributor_id: int) -> set[int]:
+    return set((await session.scalars(select(Product.id).where(Product.distributor_id == distributor_id))).all())
+
+
+def _scoped(analysis: StoreAnalysis, product_ids: set[int], distributor_id: int) -> StoreAnalysis:
+    """Lo que un proveedor ve de una tienda: solo sus productos y su plan de pedido.
+
+    Una tienda puede comprarles a varios proveedores: ninguno ve lo que la tienda le compra a otro.
+    """
+    plan = analysis.plan_for(distributor_id)
+    return replace(
+        analysis,
+        products=[p for p in analysis.products if p.product_id in product_ids],
+        order_lines=plan.order_lines if plan else [],
+        next_delivery=plan.next_delivery if plan else analysis.next_delivery,
+        order_deadline=plan.order_deadline if plan else analysis.order_deadline,
+        horizon_days=plan.horizon_days if plan else analysis.horizon_days,
+        plans=[plan] if plan else [],
+    )
+
+
+async def _analyses(session: AsyncSession, stores: list[Store], distributor_id: int) -> list[StoreAnalysis]:
     # MVP: pocas tiendas, se calculan en secuencia sobre la misma sesión.
+    product_ids = await _own_product_ids(session, distributor_id)
     results = []
     for store in stores:
         analysis = await load_store_analysis(session, store.id)
         if analysis is not None:
-            results.append(analysis)
+            results.append(_scoped(analysis, product_ids, distributor_id))
     return results
 
 
@@ -115,10 +164,10 @@ async def _sent_orders(session: AsyncSession, distributor_id: int, store_id: int
             SuggestedOrder.delivery_date,
             func.coalesce(func.sum(SuggestedOrderItem.units * Product.unit_price), 0),
         )
-        .join(Store, Store.id == SuggestedOrder.store_id)
         .outerjoin(SuggestedOrderItem, SuggestedOrderItem.order_id == SuggestedOrder.id)
         .outerjoin(Product, Product.id == SuggestedOrderItem.product_id)
-        .where(Store.distributor_id == distributor_id, SuggestedOrder.status == "sent")
+        # Solo los pedidos que le hicieron a ESTE proveedor (una tienda puede pedirle a varios).
+        .where(SuggestedOrder.distributor_id == distributor_id, SuggestedOrder.status == "sent")
         .group_by(SuggestedOrder.id)
         .order_by(SuggestedOrder.created_at.desc())
     )
@@ -199,7 +248,7 @@ async def overview(
     session: AsyncSession = Depends(get_session),
 ):
     stores = await _distributor_stores(session, distributor_id)
-    analyses = await _analyses(session, stores)
+    analyses = await _analyses(session, stores, distributor_id)
     sent = await _sent_orders(session, distributor_id)
     context = {
         "active": "overview",
@@ -227,15 +276,30 @@ async def _stores_page(
     form: dict | None = None, route_days: list[int] | None = None, status_code: int = status.HTTP_200_OK,
 ):
     stores = await _distributor_stores(session, distributor_id)
-    analyses = {analysis.store_id: analysis for analysis in await _analyses(session, stores)}
+    analyses = {analysis.store_id: analysis for analysis in await _analyses(session, stores, distributor_id)}
+    # Días de entrega de cada tienda CON ESTE proveedor.
+    links = {
+        link.store_id: link
+        for link in (
+            await session.scalars(
+                select(StoreSupplier).where(
+                    StoreSupplier.distributor_id == distributor_id, StoreSupplier.status == SUPPLIER_APPROVED
+                )
+            )
+        ).all()
+    }
     rows = []
     for store in stores:
         analysis = analyses.get(store.id)
+        link = links.get(store.id)
+        days = (link.visit_weekdays or link.route_weekdays) if link else store.visit_weekdays
         rows.append(
             {
                 "store": store,
                 "linked": store.telegram_chat_id is not None,
-                "delivery_days": join_days(parse_visit_weekdays(store.visit_weekdays)) or "—",
+                "delivery_days": join_days(parse_visit_weekdays(days or "")) or "—",
+                "days_confirmed": (link.delivery_days_set_at if link else store.delivery_days_set_at) is not None,
+                "main_supplier": store.distributor_id == distributor_id,
                 "at_risk": len(analysis.at_risk) if analysis else 0,
                 "stagnant": len(analysis.stagnant) if analysis else 0,
                 "order_total": analysis.order_total if analysis else Decimal("0"),
@@ -287,8 +351,8 @@ async def store_detail(
     session: AsyncSession = Depends(get_session),
 ):
     store = await session.get(Store, store_id)
-    # Tienda inexistente o de otro distribuidor: 404 en ambos casos (no revelar que existe).
-    if store is None or store.distributor_id != distributor_id:
+    # Tienda inexistente o que no trabaja con este proveedor: 404 en ambos casos (no revelar que existe).
+    if not await _serves(session, distributor_id, store):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return await _store_detail_page(request, session, distributor_id, store)
 
@@ -300,12 +364,22 @@ async def _store_detail_page(
     analysis = await load_store_analysis(session, store.id)
     if analysis is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    own_products = await _own_product_ids(session, distributor_id)
+    analysis = _scoped(analysis, own_products, distributor_id)
+    link = await session.scalar(
+        select(StoreSupplier).where(StoreSupplier.store_id == store.id, StoreSupplier.distributor_id == distributor_id)
+    )
+    visit_days = (link.visit_weekdays or link.route_weekdays) if link else store.visit_weekdays
 
     today = local_date(datetime.now(timezone.utc))
     window_start = datetime.combine(today - timedelta(days=CHART_DAYS - 1), datetime.min.time(), COLOMBIA_TZ)
     sales = (
         await session.execute(
-            select(Sale.sold_at, Sale.quantity).where(Sale.store_id == store.id, Sale.sold_at >= window_start)
+            select(Sale.sold_at, Sale.quantity).where(
+                Sale.store_id == store.id,
+                Sale.sold_at >= window_start,
+                Sale.product_id.in_(own_products),  # solo lo que la tienda vende de sus productos
+            )
         )
     ).all()
     units_by_day: dict = {}
@@ -339,7 +413,9 @@ async def _store_detail_page(
         "order_lines": order_lines,
         "order_total": order_total(order_lines),
         "availability_notes": capped.not_found,
-        "delivery_days": join_days(parse_visit_weekdays(store.visit_weekdays)) or "—",
+        "delivery_days": join_days(parse_visit_weekdays(visit_days or "")) or "—",
+        # Los datos del tendero los edita su proveedor principal (quien la registró); los demás solo los ven.
+        "can_edit": store.distributor_id == distributor_id,
         "analysis": analysis,
         "products": sorted(analysis.products, key=lambda p: (p.abc_class, p.name)),
         "chart": chart,
@@ -370,6 +446,7 @@ async def store_data(
     """Datos de la tienda y días de ruta. El celular de acceso se cambia aparte (cierra la sesión)."""
     store = await session.get(Store, store_id)
     if store is None or store.distributor_id != distributor_id:
+        # Solo su proveedor principal cambia los datos del tendero (los demás la ven en modo lectura).
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     raw = await request.form()
     form = {key: str(value) for key, value in raw.items()}
@@ -417,6 +494,7 @@ async def store_phone(
     """Celular del dueño: con él entra al bot (botón 📱 Compartir mi número)."""
     store = await session.get(Store, store_id)
     if store is None or store.distributor_id != distributor_id:
+        # Solo su proveedor principal cambia los datos del tendero (los demás la ven en modo lectura).
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     url = f"/panel/tiendas/{store.id}?celular="
     clean = normalize_phone(phone) if phone.strip() else None
@@ -444,7 +522,7 @@ async def demand(
     session: AsyncSession = Depends(get_session),
 ):
     stores = await _distributor_stores(session, distributor_id)
-    rows = aggregations.aggregate_demand(await _analyses(session, stores))
+    rows = aggregations.aggregate_demand(await _analyses(session, stores, distributor_id))
     return templates.TemplateResponse(
         request, "demand.html", {"active": "demand", "rows": rows, "stores_total": len(stores)}
     )
@@ -825,7 +903,7 @@ async def product_sales(
         await session.execute(
             select(Sale.store_id, Sale.sold_at, Sale.quantity)
             .join(Store, Store.id == Sale.store_id)
-            .where(Store.distributor_id == distributor_id, Sale.product_id == product_id, Sale.sold_at >= start)
+            .where(Store.id.in_(_served_store_ids(distributor_id)), Sale.product_id == product_id, Sale.sold_at >= start)
         )
     ).all()
     data = aggregations.weekday_sales([tuple(row) for row in rows], [(store.id, store.name) for store in stores])
@@ -840,7 +918,7 @@ async def live_version(
     """Huella de los datos que llegan desde Telegram y de la página pública. El panel la consulta
     cada pocos segundos y se actualiza solo cuando cambia (venta, conteo, recibo, pedido, tienda
     vinculada o solicitud de acceso). También trae cuántas solicitudes esperan respuesta."""
-    store_ids = select(Store.id).where(Store.distributor_id == distributor_id).scalar_subquery()
+    store_ids = _served_store_ids(distributor_id).scalar_subquery()
     row = (
         await session.execute(
             select(

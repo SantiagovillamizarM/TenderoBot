@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import Distributor, DistributorRequest, DistributorUser, Store, StoreRequest
+from app.models import Distributor, DistributorRequest, DistributorUser, StoreRequest
 from app.providers import CATEGORIES
 from app.roles import ROLE_ERRORS, email_role
 from app.onboarding import bot_link
@@ -22,7 +22,7 @@ from app.web.auth import LoginRateLimiter, client_ip
 from app.web.catalog import FormError
 from app.web.routes import templates
 from app.web.provider_forms import parse_provider_request
-from app.web.store_forms import PAYMENT_METHODS, parse_email, parse_store_request
+from app.web.store_forms import PAYMENT_METHODS, parse_email
 from app.web.verification import CODE_TTL, VerificationError, check_code, send_code
 
 SENT_PATH = "/solicitud/enviada"
@@ -122,8 +122,10 @@ async def register(
     para: str = Form(""),
     session: AsyncSession = Depends(get_session),
 ):
-    """Paso 1: manda el código al correo. `para=proveedor` vuelve a la sección de proveedores."""
-    target = "proveedor" if para == "proveedor" else ""
+    """Paso 1 (solo proveedores): manda el código al correo. Los tenderos se registran en Telegram."""
+    if para != "proveedor":
+        return _redirect(FORM_ANCHOR)
+    target = "proveedor"
     if website:  # campo oculto que solo llenan los robots
         return _redirect(FORM_ANCHOR)
 
@@ -202,53 +204,12 @@ async def register_logout(request: Request):
 
 
 @router.post("/solicitud", response_class=HTMLResponse)
-async def submit_request(request: Request, session: AsyncSession = Depends(get_session)):
-    """Paso 3: la solicitud. Solo con un correo ya verificado en este navegador."""
-    applicant = request.session.get(APPLICANT_KEY)
-    if not applicant:
-        return _redirect(FORM_ANCHOR)
-    raw = await request.form()
-    form = {key: str(value) for key, value in raw.items()}
-    if form.get("website"):  # campo oculto que solo llenan los robots
-        return _redirect(SENT_PATH)
-    if not request_limiter.allow(client_ip(request)):
-        return await _landing(
-            request, session, form, ["Enviaste muchas solicitudes seguidas. Espera unos minutos."],
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        )
+async def submit_request() -> RedirectResponse:
+    """Los tenderos ya no piden acceso en la página: se registran en Telegram y escogen ahí sus proveedores.
 
-    role = await email_role(session, applicant)
-    if role in ("admin", "provider"):
-        return await _landing(request, session, form, [ROLE_ERRORS[role]], status_code=status.HTTP_403_FORBIDDEN)
-    form["email"] = applicant  # el correo es el verificado, no uno escrito en el formulario
-    data, errors = parse_store_request(form)
-    distributor_ids = list((await session.scalars(select(Distributor.id).where(Distributor.status == "active"))).all())
-    chosen = form.get("distributor_id", "")
-    distributor_id = int(chosen) if chosen.isdigit() and int(chosen) in distributor_ids else None
-    if distributor_id is None and len(distributor_ids) == 1:
-        distributor_id = distributor_ids[0]
-    if distributor_id is None:
-        errors.append("Escoge tu proveedor." if distributor_ids else "Todavía no hay proveedores en TenderoBot.")
-    if not errors:
-        if await session.scalar(select(Store.id).where(Store.owner_phone == data["phone"])):
-            errors.append("Ese celular ya tiene una tienda en TenderoBot. Abre el bot y toca 📱 Compartir mi número.")
-        elif await session.scalar(
-            select(StoreRequest.id).where(
-                StoreRequest.status == "pending",
-                (StoreRequest.phone == data["phone"]) | (StoreRequest.email == applicant),
-            )
-        ):
-            errors.append("Ya hay una solicitud en revisión con ese celular o ese correo.")
-    if errors:
-        return await _landing(request, session, form, errors, status_code=status.HTTP_400_BAD_REQUEST)
-
-    session.add(StoreRequest(distributor_id=distributor_id, consent_at=datetime.now(UTC), **data))
-    try:
-        await session.commit()
-    except IntegrityError:
-        # Dos envíos casi al tiempo con el mismo celular: el índice único deja pasar solo uno.
-        await session.rollback()
-    return _redirect(SENT_PATH)
+    Las solicitudes que llegaron antes por la página siguen en el panel de cada proveedor.
+    """
+    return _redirect(FORM_ANCHOR)
 
 
 @router.post("/proveedor/solicitud", response_class=HTMLResponse)

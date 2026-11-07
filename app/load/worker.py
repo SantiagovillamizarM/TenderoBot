@@ -33,6 +33,7 @@ from app.evaluation import Observed, evaluate
 from app.inventory.engine import load_store_analysis
 from app.load.models import ERROR, FAILED, PENDING, RUNNING, SUCCESS, LoadHeartbeat, LoadRun, LoadTask
 from app.load.runner import (
+    compare_by_item,
     MAX_ATTEMPTS,
     RETRY_DELAYS,
     UNIT_TIMEOUT,
@@ -45,6 +46,7 @@ from app.load.runner import (
 )
 from app.load.units import WorkUnit
 from app.models import Distributor, PendingAction, Product, Sale, StockCount, Store
+from app.store_catalog import load_items, store_products
 from app.usage_log import save_usage
 
 # El distribuidor que crea scripts/seed.py en la base de carga.
@@ -111,6 +113,15 @@ class Outcome:
     failures: list[str] = field(default_factory=list)
     error_type: str | None = None
     error_message: str | None = None
+
+
+def item_lookup(items: list, products: list) -> Callable[[str], str]:
+    """Código -> artículo. Sirve para los códigos del catálogo de la tienda (los que usa el agente) y
+    para los códigos originales de cada proveedor (los de las unidades generadas)."""
+    by_product = {offer.product.id: item.key for item in items for offer in item.offers}
+    mapping = {offer.product.sku: item.key for item in items for offer in item.offers}
+    mapping.update({key: by_product[pid] for pid, key in handlers.sku_keys(products).items()})
+    return lambda sku: mapping.get(sku, sku)
 
 
 def _usage_fields(usage: TaskUsage) -> dict:
@@ -269,19 +280,24 @@ class Worker:
     async def _attempt(self, task: LoadTask) -> Outcome:
         store_id = self.store_ids[task.store_index]
         async with SessionLocal() as session:
-            products = await handlers.load_active_products(session, (await session.get(Store, store_id)).distributor_id)
+            # El catálogo de la tienda con TODOS sus proveedores, como en el bot.
+            items = await load_items(session, await session.get(Store, store_id))
+            products = [item.preferred.product for item in items]
+            item_of = item_lookup(items, products)
             stock = {}
             if "stock_de" in task.expected:
                 analysis = await load_store_analysis(session, store_id)
-                stock = {item.sku: item.stock for item in analysis.products}
-        expected = resolve_expected(task.expected, stock)
+                by_id = {offer.product.id: item.key for item in items for offer in item.offers}
+                stock = {by_id.get(p.product_id, p.sku): p.stock for p in analysis.products}
         observed = Observed()
         actions = recording_actions(handlers.store_actions(store_id, products, "text", {}), observed)
         result = await run_agent(task.text, build_tools(actions, user_message=task.text), AGENT_SYSTEM_PROMPT)
         observed.tools = [call.name for call in result.tool_calls]
         observed.reply = result.reply
         observed.finished = result.finished
-        failures = evaluate(expected, observed)
+        # Se compara por artículo: la venta puede quedar con el producto de cualquier proveedor de ese artículo.
+        expected, compared = compare_by_item(task.expected, observed, item_of)
+        failures = evaluate(resolve_expected(expected, stock), compared)
         return Outcome(FAILED if failures else SUCCESS, observed, failures)
 
     async def _save(self, task: LoadTask, outcome: Outcome, usage: TaskUsage, started_at: datetime,
@@ -293,14 +309,8 @@ class Worker:
             row = await session.get(LoadTask, task.id, with_for_update=True)
             confirmed = False
             if outcome.status == SUCCESS and row.confirm and observed.sales:
-                store = await session.get(Store, store_id)
-                skus = [sku for sku, _ in observed.sales]
-                products = {
-                    p.sku: p
-                    for p in (await session.scalars(
-                        select(Product).where(Product.distributor_id == store.distributor_id, Product.sku.in_(skus))
-                    )).all()
-                }
+                # Los códigos del borrador son los del catálogo de la tienda (todos sus proveedores).
+                products = handlers.products_by_sku(await store_products(session, await session.get(Store, store_id)))
                 now = datetime.now(UTC)
                 for sku, quantity in observed.sales:
                     product = products[sku]

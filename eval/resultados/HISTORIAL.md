@@ -11,6 +11,7 @@ Todas contra `grok-4.20-0309-non-reasoning` por la pasarela del reto, con la mis
 | 5 | `20261106-081523` | El código verifica que la cita esté en el mensaje del tendero | **47/48 (98%)** | **US$0,00119** | 3.020 (2.635) | 2,1 s / 2,9 s |
 | 5b | `20261106-081619` | Repetición, sin cambios | 47/48 (98%) | US$0,00120 | 3.020 (2.621) | 2,3 s / 2,9 s |
 | 5c | `20261106-081646` | Repetición, sin cambios | 47/48 (98%) | US$0,00123 | 3.020 (2.600) | 2,1 s / 3,0 s |
+| 6 | `20261107-114239` | Varios proveedores por tienda: dos líneas nuevas en las instrucciones (comparar y escoger proveedor) | 47/48 (98%) | US$0,00143 | 3.097 (2.501) | 1,5 s / 2,5 s |
 
 ## Qué pasó en cada corrida
 
@@ -30,6 +31,8 @@ Antes de esta corrida se agregaron 8 casos de control (V19 a V26) con otra redac
 **5. La cita se verifica.** La herramienta comprueba que `texto_cantidad` aparezca en el mensaje del tendero, sin importar tildes ni mayúsculas. Pasaron V17 y V22. Repetida tres veces, da el mismo resultado.
 
 El costo por tarea bajó en la corrida 5 por dos razones: Grok dejó de hacer búsquedas de más y las instrucciones, ya estables, quedaron más tiempo en la caché de la pasarela (87% de los tokens de entrada en caché, contra 63% en la corrida 4). El número de llamadas por tarea no cambió (1,9).
+
+**6. Varios proveedores.** Se agregaron al agente las herramientas `comparar_proveedores` y `preferir_proveedor` y dos líneas a sus instrucciones. La evaluación (sobre la tienda fija de un proveedor) sigue en 47/48. El costo por tarea resuelta subió un poco: las instrucciones son más largas y esta corrida tuvo menos tokens en caché.
 
 ## Fallos que quedan
 

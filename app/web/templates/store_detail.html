@@ -16,6 +16,7 @@
 
 {% if data_message %}<p class="notice">{{ data_message }}</p>{% endif %}
 
+{% if can_edit %}
 <section class="card">
   <div class="card-head">
     <h2>Acceso al bot</h2>
@@ -56,6 +57,23 @@
     </div>
   </form>
 </details>
+{% else %}
+<section class="card">
+  <div class="card-head">
+    <h2>Datos de la tienda</h2>
+    <span class="badge badge-muted">Te escogió en Telegram</span>
+  </div>
+  <p class="muted small">Esta tienda también les compra a otros proveedores. Aquí ves solo tus productos, tu pedido sugerido y los pedidos que te hizo. Sus datos los cambia el tendero o su proveedor principal.</p>
+  <dl class="facts">
+    <div><dt>Dueño</dt><dd>{{ store.owner_name }}</dd></div>
+    {% if store.owner_phone %}<div><dt>Celular</dt><dd>{{ store.owner_phone|phone }}</dd></div>{% endif %}
+    <div><dt>Dirección</dt><dd>{{ [store.address, store.neighborhood, store.city]|select|join(', ') or 'Sin dirección' }}
+      {% if store.latitude is not none %}<br><a href="https://www.openstreetmap.org/?mlat={{ store.latitude }}&amp;mlon={{ store.longitude }}#map=18/{{ store.latitude }}/{{ store.longitude }}" target="_blank" rel="noopener">Ver en el mapa</a>{% endif %}</dd></div>
+    {% if store.receiving_hours %}<div><dt>Horario para recibir</dt><dd>{{ store.receiving_hours|hours }}</dd></div>{% endif %}
+    {% if store.payment_method %}<div><dt>Forma de pago</dt><dd>{{ payment_methods[store.payment_method] }}</dd></div>{% endif %}
+  </dl>
+</section>
+{% endif %}
 
 <section class="card">
   <div class="card-head">

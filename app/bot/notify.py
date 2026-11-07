@@ -2,11 +2,11 @@
 
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from telegram import Bot
 
 from app.db import SessionLocal
-from app.models import Store
+from app.models import SUPPLIER_APPROVED, Store, StoreSupplier
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,16 @@ async def notify_distributor_stores(bot: Bot, distributor_id: int, text: str) ->
         chat_ids = (
             await session.scalars(
                 select(Store.telegram_chat_id).where(
-                    Store.distributor_id == distributor_id,
+                    # Las tiendas que lo aceptaron como proveedor (aunque no sea el principal).
+                    or_(
+                        Store.distributor_id == distributor_id,
+                        Store.id.in_(
+                            select(StoreSupplier.store_id).where(
+                                StoreSupplier.distributor_id == distributor_id,
+                                StoreSupplier.status == SUPPLIER_APPROVED,
+                            )
+                        ),
+                    ),
                     Store.telegram_chat_id.is_not(None),
                     Store.consent_at.is_not(None),
                 )
