@@ -40,7 +40,7 @@ from app.providers import (
     regulated,
     unblock_product,
 )
-from app.web.auth import ADMIN_LOGIN_PATH, admin_logout_session, require_admin
+from app.web.auth import ADMIN_LOGIN_PATH, require_admin
 from app.web.catalog import FormError
 from app.web.provider_forms import parse_provider_edit
 from app.web.routes import templates
@@ -101,7 +101,7 @@ async def _provider(session: AsyncSession, provider_id: int) -> Distributor:
 
 @router.post("/logout")
 async def logout(request: Request):
-    admin_logout_session(request)
+    request.session.clear()  # salir cierra todo: no queda ninguna otra sesión viva en el navegador
     return _go(ADMIN_LOGIN_PATH)
 
 

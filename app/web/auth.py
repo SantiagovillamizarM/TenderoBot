@@ -113,7 +113,8 @@ async def authenticate_admin(session: AsyncSession, email: str, password: str) -
 
 
 def login_session(request: Request, user: DistributorUser) -> None:
-    logout_session(request)
+    # Una sola cuenta por navegador: entrar como proveedor cierra cualquier otra sesión (también la de admin).
+    request.session.clear()
     request.session["user_id"] = user.id
     request.session["distributor_id"] = user.distributor_id
 
@@ -124,6 +125,8 @@ def logout_session(request: Request) -> None:
 
 
 def admin_login_session(request: Request, admin: AdminUser) -> None:
+    # Una sola cuenta por navegador: entrar como admin cierra la sesión de proveedor que hubiera.
+    request.session.clear()
     request.session[ADMIN_KEY] = admin.id
 
 

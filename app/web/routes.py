@@ -59,7 +59,6 @@ from app.providers import find_token
 from app.web.auth import (
     MIN_PASSWORD_LENGTH,
     login_session,
-    logout_session,
     password_problem,
     require_distributor,
 )
@@ -237,7 +236,7 @@ async def activate_submit(
 
 @router.post("/logout")
 async def logout(request: Request):
-    logout_session(request)
+    request.session.clear()  # salir cierra todo: no queda ninguna otra sesión viva en el navegador
     return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
 
 

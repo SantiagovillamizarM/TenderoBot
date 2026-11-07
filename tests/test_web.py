@@ -414,3 +414,43 @@ async def test_single_login_sends_the_admin_to_admin():
                 assert (await client.get(old)).headers["location"] == "/login"
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_signing_in_as_supplier_closes_the_admin_session():
+    """Una sola cuenta por navegador: si entra el proveedor, la sesión de admin anterior se cierra."""
+    from types import SimpleNamespace
+
+    import bcrypt
+
+    from app.db import get_session
+    from app.main import app
+
+    def hashed(password: str) -> str:
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode("utf-8")
+
+    admin = SimpleNamespace(id=1, email="admin@tenderobot.co", password_hash=hashed("Admin-de-prueba-2026"))
+    user = SimpleNamespace(id=2, distributor_id=2, email="ventas@elbarrio.co", password_hash=hashed("Barrio-de-prueba-2026"))
+
+    class Session:
+        # login admin: es admin, no es proveedor | login proveedor: no es admin, es proveedor y está activo
+        answers = [admin, None, None, user, "active"]
+
+        async def scalar(self, statement):
+            return self.answers.pop(0)
+
+    async def fake_session():
+        yield Session()
+
+    app.dependency_overrides[get_session] = fake_session
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post("/login", data={"email": admin.email, "password": "Admin-de-prueba-2026"})
+            assert first.headers["location"] == "/admin"
+            second = await client.post("/login", data={"email": user.email, "password": "Barrio-de-prueba-2026"})
+            assert second.headers["location"] == "/panel"
+            assert (await client.get("/login")).headers["location"] == "/panel"
+            assert (await client.get("/admin")).headers["location"] == "/login"
+    finally:
+        app.dependency_overrides.clear()
