@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -11,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
+from app.db import SessionLocal, get_session
 from app.bot import texts as bot_texts
 from app.bot.notify import notify_distributor_stores
 from app.bot.texts import day_label, deadline_label, join_days
@@ -64,6 +65,7 @@ from app.web.auth import (
 )
 
 CHART_DAYS = 28
+PARALLEL_ANALYSES = 4  # el pool tiene 5 (+5 de reserva) conexiones
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 templates.env.filters["cop"] = formatting.cop
@@ -143,14 +145,17 @@ def _scoped(analysis: StoreAnalysis, product_ids: set[int], distributor_id: int)
 
 
 async def _analyses(session: AsyncSession, stores: list[Store], distributor_id: int) -> list[StoreAnalysis]:
-    # MVP: pocas tiendas, se calculan en secuencia sobre la misma sesión.
+    # Cada tienda hace ~10 consultas y cada consulta a la base (Neon) es un viaje de ~100 ms: las tiendas se
+    # calculan a la vez, cada una con su propia conexión (máximo PARALLEL_ANALYSES, para no agotar el pool).
     product_ids = await _own_product_ids(session, distributor_id)
-    results = []
-    for store in stores:
-        analysis = await load_store_analysis(session, store.id)
-        if analysis is not None:
-            results.append(_scoped(analysis, product_ids, distributor_id))
-    return results
+    limit = asyncio.Semaphore(PARALLEL_ANALYSES)
+
+    async def analyze(store_id: int) -> StoreAnalysis | None:
+        async with limit, SessionLocal() as own:
+            return await load_store_analysis(own, store_id)
+
+    analyses = await asyncio.gather(*(analyze(store.id) for store in stores))
+    return [_scoped(analysis, product_ids, distributor_id) for analysis in analyses if analysis is not None]
 
 
 async def _sent_orders(session: AsyncSession, distributor_id: int, store_id: int | None = None) -> list[dict]:

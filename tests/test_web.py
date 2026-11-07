@@ -450,7 +450,11 @@ async def test_signing_in_as_supplier_closes_the_admin_session():
             assert first.headers["location"] == "/admin"
             second = await client.post("/login", data={"email": user.email, "password": "Barrio-de-prueba-2026"})
             assert second.headers["location"] == "/panel"
-            assert (await client.get("/login")).headers["location"] == "/panel"
+            # /login muestra el formulario y avisa que la sesión abierta es la de proveedor (no la de admin).
+            page = (await client.get("/login")).text
+            assert "sesión abierta como <strong>proveedor</strong>" in page and 'action="/panel/logout"' in page
             assert (await client.get("/admin")).headers["location"] == "/login"
+            await client.post("/panel/logout")
+            assert "sesión abierta" not in (await client.get("/login")).text
     finally:
         app.dependency_overrides.clear()

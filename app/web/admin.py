@@ -112,34 +112,36 @@ async def logout(request: Request):
 async def overview(request: Request, _admin: int = Depends(require_admin), session: AsyncSession = Depends(get_session)):
     since = datetime.now(UTC) - timedelta(days=ORDERS_WINDOW_DAYS)
 
-    async def count(query) -> int:
-        return int(await session.scalar(query) or 0)
+    def one(query):
+        return query.scalar_subquery()
 
-    orders_value = await session.scalar(
-        select(func.coalesce(func.sum(SuggestedOrderItem.units * Product.unit_price), 0))
-        .join(SuggestedOrder, SuggestedOrder.id == SuggestedOrderItem.order_id)
-        .join(Product, Product.id == SuggestedOrderItem.product_id)
-        .where(SuggestedOrder.status.in_(("sent", "received")), SuggestedOrder.created_at >= since)
-    )
-    context = {
-        "admin_active": "overview",
-        "providers_active": await count(select(func.count(Distributor.id)).where(Distributor.status == "active")),
-        "providers_suspended": await count(select(func.count(Distributor.id)).where(Distributor.status == "suspended")),
-        "provider_requests": await count(
-            select(func.count(DistributorRequest.id)).where(DistributorRequest.status == "pending")
+    # Todo en una sola consulta: cada consulta a la base es un viaje de ida y vuelta (~100 ms hasta Neon).
+    sent = (SuggestedOrder.status.in_(("sent", "received")), SuggestedOrder.created_at >= since)
+    numbers = {
+        "providers_active": one(select(func.count(Distributor.id)).where(Distributor.status == "active")),
+        "providers_suspended": one(select(func.count(Distributor.id)).where(Distributor.status == "suspended")),
+        "provider_requests": one(select(func.count(DistributorRequest.id)).where(DistributorRequest.status == "pending")),
+        "stores_total": one(select(func.count(Store.id))),
+        "stores_linked": one(select(func.count(Store.id)).where(Store.telegram_chat_id.is_not(None))),
+        "store_requests": one(select(func.count(StoreRequest.id)).where(StoreRequest.status == "pending")),
+        "orders_count": one(select(func.count(SuggestedOrder.id)).where(*sent)),
+        "orders_value": one(
+            select(func.coalesce(func.sum(SuggestedOrderItem.units * Product.unit_price), 0))
+            .select_from(SuggestedOrderItem)
+            .join(SuggestedOrder, SuggestedOrder.id == SuggestedOrderItem.order_id)
+            .join(Product, Product.id == SuggestedOrderItem.product_id)
+            .where(*sent)
         ),
-        "stores_total": await count(select(func.count(Store.id))),
-        "stores_linked": await count(select(func.count(Store.id)).where(Store.telegram_chat_id.is_not(None))),
-        "store_requests": await count(select(func.count(StoreRequest.id)).where(StoreRequest.status == "pending")),
-        "orders_count": await count(
-            select(func.count(SuggestedOrder.id)).where(
-                SuggestedOrder.status.in_(("sent", "received")), SuggestedOrder.created_at >= since
-            )
-        ),
-        "orders_value": Decimal(orders_value or 0),
-        "orders_days": ORDERS_WINDOW_DAYS,
-        "blocked_products": await count(select(func.count(Product.id)).where(Product.blocked_at.is_not(None))),
+        "blocked_products": one(select(func.count(Product.id)).where(Product.blocked_at.is_not(None))),
     }
+    row = (await session.execute(select(*(query.label(name) for name, query in numbers.items())))).one()
+    values = row._mapping
+    context = {name: int(values[name] or 0) for name in numbers if name != "orders_value"}
+    context.update(
+        admin_active="overview",
+        orders_value=Decimal(values["orders_value"] or 0),
+        orders_days=ORDERS_WINDOW_DAYS,
+    )
     return _page(request, "admin_overview.html", context)
 
 

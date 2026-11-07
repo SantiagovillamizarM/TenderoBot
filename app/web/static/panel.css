@@ -552,6 +552,10 @@ td form { margin: 0; }
 }
 .alert { background: var(--risk-bg); color: #ffb3a8; border: 1px solid rgba(255, 125, 110, 0.3); }
 .notice { background: var(--ok-bg); color: #9ff0c4; border: 1px solid rgba(95, 211, 154, 0.3); }
+.notice.open-session { flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+.notice.open-session p { margin: 0; }
+.notice.open-session a { color: inherit; font-weight: 600; margin-left: 0.35rem; }
+.inline-logout { margin: 0; }
 
 .empty { color: var(--muted); margin: 0; padding: 1.5rem 0 0.5rem; text-align: center; }
 

@@ -442,34 +442,25 @@ def analyze_store(
     )
 
 
-async def _former_products(session: AsyncSession, store_id: int, items: list, known: dict[int, int]) -> dict[int, int]:
+async def _map_former(session: AsyncSession, items: list, canonical: dict[int, int | None], ids) -> None:
     """Productos con historia en la tienda que ya no están en su catálogo (de un proveedor que dejó, o que el
     proveedor desactivó) -> el artículo de hoy que es el mismo producto. Así, si el tendero deja a un proveedor
-    por otro más barato, las ventas, conteos y recibos de antes siguen contando en el mismo stock."""
+    por otro más barato, las ventas, conteos y recibos de antes siguen contando en el mismo stock.
+
+    Solo consulta la base si aparece un producto desconocido (lo normal es que no haya ninguno). Los que no
+    se parecen a ningún artículo quedan en None para no volver a buscarlos.
+    """
+    unknown = {product_id for product_id in ids if product_id not in canonical}
+    if not unknown:
+        return
+    for product_id in unknown:
+        canonical[product_id] = None
     if not items:
-        return {}
-    ids: set[int] = set()
-    for model in (StockCount, Sale, Receipt):
-        ids |= set((await session.scalars(select(model.product_id).where(model.store_id == store_id).distinct())).all())
-    ids |= set(
-        (
-            await session.scalars(
-                select(SuggestedOrderItem.product_id)
-                .join(SuggestedOrder, SuggestedOrder.id == SuggestedOrderItem.order_id)
-                .where(SuggestedOrder.store_id == store_id, SuggestedOrder.status == "sent")
-                .distinct()
-            )
-        ).all()
-    )
-    ids -= set(known)
-    if not ids:
-        return {}
-    mapping = {}
-    for product in (await session.scalars(select(Product).where(Product.id.in_(ids)))).all():
+        return
+    for product in (await session.scalars(select(Product).where(Product.id.in_(unknown)))).all():
         item = match_item(items, product)
         if item is not None:
-            mapping[product.id] = item.preferred.product.id
-    return mapping
+            canonical[product.id] = item.preferred.product.id
 
 
 async def load_store_analysis(
@@ -488,8 +479,9 @@ async def load_store_analysis(
     # analiza con el producto de su proveedor preferido, y ventas, conteos, recibos y pedidos de los
     # otros proveedores se cuentan en ese mismo artículo.
     items = await load_items(session, store)
-    canonical = {offer.product.id: item.preferred.product.id for item in items for offer in item.offers}
-    canonical.update(await _former_products(session, store_id, items, canonical))
+    canonical: dict[int, int | None] = {
+        offer.product.id: item.preferred.product.id for item in items for offer in item.offers
+    }
     products = sorted(
         (
             ProductInput(p.id, p.sku, p.name, p.units_per_case, Decimal(p.unit_price), p.distributor_id)
@@ -514,9 +506,10 @@ async def load_store_analysis(
             .order_by(StockCount.counted_at.desc())
         )
     ).all()
+    await _map_former(session, items, canonical, (c.product_id for c in count_rows))
     latest_counts: dict[int, StockCount] = {}
     for c in count_rows:
-        if c.product_id in canonical:
+        if canonical.get(c.product_id) is not None:
             latest_counts.setdefault(canonical[c.product_id], c)
     counts = [CountEvent(product_id, c.quantity, c.counted_at) for product_id, c in latest_counts.items()]
 
@@ -533,11 +526,7 @@ async def load_store_analysis(
             select(Sale).where(Sale.store_id == store_id, Sale.sold_at > sales_since, Sale.sold_at <= now)
         )
     ).all()
-    sales = [
-        SaleEvent(canonical[s.product_id], s.quantity, Decimal(s.unit_price), s.sold_at)
-        for s in sale_rows
-        if s.product_id in canonical
-    ]
+    sales_ids = [s.product_id for s in sale_rows]
 
     receipt_rows = (
         await session.scalars(
@@ -546,11 +535,7 @@ async def load_store_analysis(
             )
         )
     ).all()
-    receipts = [
-        ReceiptEvent(canonical[r.product_id], r.quantity, r.received_at)
-        for r in receipt_rows
-        if r.product_id in canonical
-    ]
+    receipt_ids = [r.product_id for r in receipt_rows]
 
     # Pedidos enviados que todavía no llegan: lo que traen no se vuelve a pedir.
     transit_since = local_date(now) - timedelta(days=IN_TRANSIT_GRACE_DAYS)
@@ -566,9 +551,22 @@ async def load_store_analysis(
             .group_by(SuggestedOrderItem.product_id)
         )
     ).all()
+    await _map_former(
+        session, items, canonical, sales_ids + receipt_ids + [product_id for product_id, _units in transit_rows]
+    )
+    sales = [
+        SaleEvent(canonical[s.product_id], s.quantity, Decimal(s.unit_price), s.sold_at)
+        for s in sale_rows
+        if canonical.get(s.product_id) is not None
+    ]
+    receipts = [
+        ReceiptEvent(canonical[r.product_id], r.quantity, r.received_at)
+        for r in receipt_rows
+        if canonical.get(r.product_id) is not None
+    ]
     in_transit: dict[int, int] = defaultdict(int)
     for product_id, units in transit_rows:
-        if product_id in canonical:
+        if canonical.get(product_id) is not None:
             in_transit[canonical[product_id]] += int(units or 0)
 
     return analyze_store(

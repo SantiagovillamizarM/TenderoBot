@@ -23,6 +23,14 @@
     <h2>Iniciar sesión</h2>
     <p>Proveedores y administradores.</p>
     {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+    {% if open_session %}
+    <div class="notice open-session">
+      <p>Ya tienes una sesión abierta como <strong>{{ 'administrador' if open_session == 'admin' else 'proveedor' }}</strong>.
+        <a href="/{{ open_session }}">Ir a {{ 'administración' if open_session == 'admin' else 'tu panel' }}</a></p>
+      <form method="post" action="/{{ open_session }}/logout" class="inline-logout"><button type="submit" class="link-btn">Salir</button></form>
+      <p class="hint">Si entras abajo con otra cuenta, esa sesión se cierra.</p>
+    </div>
+    {% endif %}
     <form method="post" action="/login">
       <label for="email">Correo</label>
       <input id="email" name="email" type="email" value="{{ email }}" autocomplete="username" placeholder="tu@correo.com" required>

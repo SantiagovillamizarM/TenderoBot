@@ -40,18 +40,27 @@ def _go(path: str) -> RedirectResponse:
     return RedirectResponse(path, status_code=status.HTTP_303_SEE_OTHER)
 
 
+def open_session(request: Request) -> str | None:
+    """Sesión que ya tiene abierta este navegador: "admin", "panel" o None."""
+    if isinstance(request.session.get(ADMIN_KEY), int):
+        return "admin"
+    if isinstance(request.session.get("distributor_id"), int):
+        return "panel"
+    return None
+
+
 def _page(request: Request, error: str | None = None, email: str = "", retry_after: int = 0,
           status_code: int = status.HTTP_200_OK):
-    context = {"error": error, "email": email, "retry_after": retry_after, "bot_link": bot_link(bot_username(request))}
+    context = {"error": error, "email": email, "retry_after": retry_after, "bot_link": bot_link(bot_username(request)),
+               "open_session": open_session(request)}
     return templates.TemplateResponse(request, "login.html", context, status_code=status_code)
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request):
-    if isinstance(request.session.get(ADMIN_KEY), int):
-        return _go("/admin")
-    if isinstance(request.session.get("distributor_id"), int):
-        return _go("/panel")
+    # Siempre se muestra el formulario: si ya hay una sesión abierta se avisa cuál es (con su enlace y
+    # "Salir"), en vez de saltar a ese panel. Así nadie cree que entró con un correo cuando en realidad
+    # sigue abierta la sesión de otra cuenta. Entrar con otra cuenta cierra la anterior.
     # Si recarga mientras está bloqueado, sigue viendo el contador.
     error = SUSPENDED_ERROR if request.query_params.get("suspendido") else None
     return _page(request, error, retry_after=login_limiter.retry_after(client_ip(request)))
