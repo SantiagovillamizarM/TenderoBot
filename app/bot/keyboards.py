@@ -57,6 +57,25 @@ def remove_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
+START_LOGIN = "start:login"
+START_SIGNUP = "start:signup"
+START_PATTERN = r"^start:(login|signup)$"
+
+
+def account_keyboard() -> InlineKeyboardMarkup:
+    """Primera pregunta a un chat sin tienda: ¿ya tiene cuenta o va a registrar su tienda?"""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔑 Sí, ya tengo cuenta", callback_data=START_LOGIN)],
+            [InlineKeyboardButton("🆕 No, quiero registrar mi tienda", callback_data=START_SIGNUP)],
+        ]
+    )
+
+
+def register_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🆕 Registrar mi tienda", callback_data=START_SIGNUP)]])
+
+
 def consent_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

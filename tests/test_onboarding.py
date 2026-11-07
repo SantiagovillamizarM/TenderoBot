@@ -271,6 +271,7 @@ async def test_sharing_phone_after_rejection_shows_the_reason(monkeypatch):
     request = store_request(status="rejected", rejection_reason="Falta la dirección exacta")
     replies = bot_with_request(monkeypatch, request)
     started = record_signups(monkeypatch)
+    handlers._start_choice[555] = "signup"
     await handlers.handle_contact(contact_update(), None)
     assert len(replies) == 1 and "Motivo: Falta la dirección exacta" in replies[0]
     # Después del motivo puede registrarse en Telegram y escoger otros proveedores.

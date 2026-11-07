@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 from collections import Counter, defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -53,7 +54,7 @@ from app.models import (
     StoreSupplier,
 )
 
-from app.phones import normalize_phone
+from app.phones import format_phone, normalize_phone
 from app.schemas import OrderChange, SaleLine, StockLine
 from app import catalog_merge
 from app.store_catalog import choose, load_items, store_products
@@ -117,6 +118,17 @@ async def _ask_login(update: Update, text: str = texts.ASK_LOGIN) -> None:
     await _reply(update, text, reply_markup=keyboards.share_phone_keyboard())
 
 
+async def _ask_account(update: Update, text: str = texts.ASK_ACCOUNT) -> None:
+    """Chat sin tienda: primero se pregunta si ya tiene cuenta o si va a registrar su tienda."""
+    await _reply(update, text, reply_markup=keyboards.account_keyboard())
+
+
+# Lo que escogió cada chat sin tienda en /start ("login" o "signup") y el número que ya verificó.
+# En memoria: si el bot se reinicia, basta con volver a escoger.
+_start_choice: dict[int, str] = {}
+_verified_phone: dict[int, str] = {}
+
+
 async def check_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = _chat_id(update)
     if chat_id is None:
@@ -156,12 +168,14 @@ async def require_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if message is not None and message.text and message.text.split()[0].split("@")[0].lower() == "/start":
         return
     query = update.callback_query
+    if query is not None and re.match(keyboards.START_PATTERN, query.data or ""):
+        return
     if query is not None:
         await query.answer()
     if in_review:
         await _reply(update, texts.REQUEST_IN_REVIEW)
     else:
-        await _ask_login(update)
+        await _ask_account(update)
     raise ApplicationHandlerStop
 
 
@@ -400,7 +414,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await _reply(update, texts.INTRO)
                 await registration.ask(signup, _say(update))
                 return
-            await _ask_login(update, texts.START_UNLINKED)
+            await _reply(update, texts.START_UNLINKED, reply_markup=keyboards.account_keyboard())
             return
         # Siempre se saluda primero y luego se retoma el paso que falte.
         if store.consent_at is None:
@@ -451,8 +465,15 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 signup = await registration.get_registration(session, chat_id)
                 if signup is not None and signup.phone == phone:
                     await registration.ask(signup, _say(update))
-                else:
+                elif _start_choice.get(chat_id) == "signup":
                     await registration.begin(session, chat_id, phone, _say(update))
+                else:
+                    # Dijo que ya tenía cuenta (o no escogió): su número no es de ninguna tienda.
+                    _verified_phone[chat_id] = phone
+                    await _reply(update, texts.PHONE_VERIFIED, reply_markup=keyboards.remove_keyboard())
+                    await _reply(
+                        update, texts.no_account_for_phone(format_phone(phone)), reply_markup=keyboards.register_keyboard()
+                    )
             return
         if store.telegram_chat_id is not None:
             # El dueño del número verificado manda: la sesión pasa a esta cuenta.
@@ -461,7 +482,12 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         store.consent_at = await get_consent(session, store.id, chat_id)
         store.last_activity_at = datetime.now(UTC)
         store.idle_notice_sent_at = None
+        wanted_signup = _start_choice.pop(chat_id, None) == "signup"
+        _verified_phone.pop(chat_id, None)
         await _reply(update, texts.PHONE_VERIFIED, reply_markup=keyboards.remove_keyboard())
+        if wanted_signup:
+            # Quería registrarse, pero su número ya es de una tienda: el número manda y entra con ella.
+            await _reply(update, texts.phone_has_store(store.name))
         if store.consent_at is None:
             await _reply(update, texts.CONSENT_NOTICE, reply_markup=keyboards.consent_keyboard())
         else:
@@ -476,6 +502,39 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await context.bot.send_message(previous_chat_id, texts.SESSION_MOVED)
         except Exception:
             logger.info("No se pudo avisar al chat anterior que se cerró la sesión")
+
+
+async def handle_start_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botones de /start: 🔑 ya tengo cuenta o 🆕 registrar mi tienda."""
+    query = update.callback_query
+    chat_id = _chat_id(update)
+    if query is None or chat_id is None:
+        return
+    await query.answer()
+    await _remove_buttons(update)
+    async with session_scope() as session:
+        store = await get_store_by_chat(session, chat_id)
+        if store is not None:
+            await _reply(update, texts.already_logged_in(store.name))
+            return
+        signup = await registration.get_registration(session, chat_id)
+        if signup is not None:
+            await registration.ask(signup, _say(update))
+            return
+        if query.data == keyboards.START_LOGIN:
+            _start_choice[chat_id] = "login"
+            await _ask_login(update)
+            return
+        _start_choice[chat_id] = "signup"
+        phone = _verified_phone.pop(chat_id, None)
+        if phone is None:
+            await _ask_login(update, texts.ASK_SIGNUP_PHONE)
+            return
+        # Ya había compartido su número (que no es de ninguna tienda): empieza el registro de una vez.
+        if await session.scalar(select(Store.id).where(Store.owner_phone == phone)) is not None:
+            await _ask_login(update)
+            return
+        await registration.begin(session, chat_id, phone, _say(update))
 
 
 async def get_consent(session: AsyncSession, store_id: int, chat_id: int) -> datetime | None:
@@ -1759,6 +1818,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("cancelar", handle_cancel))
     application.add_handler(CommandHandler("proveedores", handle_providers))
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
+    application.add_handler(CallbackQueryHandler(handle_start_choice, pattern=keyboards.START_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_consent, pattern=f"^{keyboards.ACCEPT_CONSENT}$"))
     application.add_handler(
         CallbackQueryHandler(handle_reject_consent, pattern=f"^{keyboards.REJECT_CONSENT}$")

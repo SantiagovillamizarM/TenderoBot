@@ -8,8 +8,24 @@ VOICE_TOO_LONG = "El audio es muy largo. Máximo 2 minutos."
 NEED_CONSENT = "Para seguir, primero responde si aceptas el uso de tus datos."
 ASK_LOGIN = (
     "Para entrar, toca el botón 📱 Compartir mi número que aparece abajo.\n"
-    "Así compruebo que eres el dueño de la tienda, sin códigos ni contraseñas."
+    "Tu número es tu llave: así compruebo que eres el dueño de la tienda, sin códigos ni contraseñas."
 )
+ASK_ACCOUNT = "¿Ya tienes tu tienda registrada en TenderoBot?"
+ASK_SIGNUP_PHONE = (
+    "Para registrar tu tienda, toca el botón 📱 Compartir mi número que aparece abajo.\n"
+    "Ese número queda como tu llave: con él entras siempre, sin códigos ni contraseñas."
+)
+
+
+def no_account_for_phone(phone: str) -> str:
+    return (
+        f"🔍 No encontré ninguna tienda registrada con el número {phone}.\n\n"
+        "Si es tu primera vez, registra tu tienda aquí mismo con el botón de abajo."
+    )
+
+
+def phone_has_store(store_name: str) -> str:
+    return f"Tu número ya tiene una tienda registrada: {store_name}. Entraste con ella."
 CONTACT_NOT_YOURS = "Ese no es tu número. Toca el botón 📱 Compartir mi número para mandar el tuyo."
 PHONE_VERIFIED = "✅ Número verificado."
 PROVIDER_SUSPENDED = (
@@ -91,7 +107,7 @@ CONSENT_NOTICE = (
     "En Colombia, la Ley 1581 de 2012 protege los datos personales: nadie puede usarlos "
     "sin tu autorización, y tú puedes pedir en cualquier momento conocerlos, corregirlos o borrarlos.\n\n"
     "TenderoBot guardará el chat, las ventas y el stock de tu tienda. "
-    "Esta información solo se usará para preparar tus futuros pedidos de productos con tu distribuidor.\n\n"
+    "Esta información solo se usará para preparar tus futuros pedidos de productos con tus proveedores.\n\n"
     "¿Aceptas?"
 )
 CONSENT_REJECTED = (
@@ -101,17 +117,17 @@ CONSENT_REJECTED = (
 CONSENT_ALREADY = "Ya habías aceptado antes. Pon /ayuda para ver lo que puedo hacer."
 INTRO = (
     "👋 Bienvenido a TenderoBot, el bot que te ayuda a llevar el inventario "
-    "de tu tienda y a hacer el pedido al distribuidor sin perder tiempo."
+    "de tu tienda y a hacerles el pedido a tus proveedores sin perder tiempo."
 )
 QUICK_START = (
     "Así me usas:\n\n"
     "🛒 Cada vez que vendas, escríbeme o mándame un audio con lo que vendiste. "
     "No tienes que decir \"vendí\", basta con: 2 coca litro y un pan\n\n"
     "📷 Para contar lo que tienes, mándame una foto del estante.\n\n"
-    "📦 Escribe /pedido y te digo qué pedirle al distribuidor.\n\n"
+    "📦 Escribe /pedido y te digo qué pedirles a tus proveedores.\n\n"
     "Antes de guardar algo siempre te pregunto. Escribe /ayuda para ver más."
 )
-START_UNLINKED = INTRO + "\n\n" + ASK_LOGIN
+START_UNLINKED = INTRO + "\n\n" + ASK_ACCOUNT
 START_LINKED = INTRO + "\n\n" + QUICK_START
 
 

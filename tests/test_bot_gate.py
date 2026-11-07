@@ -91,15 +91,35 @@ async def test_unlinked_chat_lets_start_and_phone_through(unlinked, update_facto
     lambda: message_update("MARTA01"),
     lambda: message_update(voice=True),
 ])
-async def test_unlinked_chat_is_asked_to_share_phone(unlinked, update_factory):
+async def test_unlinked_chat_is_asked_if_it_has_an_account(unlinked, update_factory):
     with pytest.raises(ApplicationHandlerStop):
         await handlers.require_link(update_factory(), None)
-    assert unlinked == [texts.ASK_LOGIN]
+    assert unlinked == [texts.ASK_ACCOUNT]
+
+
+@pytest.mark.asyncio
+async def test_start_buttons_pass_the_gate(unlinked):
+    for data in ("start:login", "start:signup"):
+        await handlers.require_link(start_button(data), None)
+    assert unlinked == []
+
+
+@pytest.mark.asyncio
+async def test_start_without_store_asks_if_it_has_an_account(unlinked):
+    await handlers.handle_start(message_update("/start"), None)
+    assert unlinked == [texts.START_UNLINKED]
+    assert texts.START_UNLINKED == texts.INTRO + "\n\n" + texts.ASK_ACCOUNT
 
 
 def test_texts():
-    assert texts.START_UNLINKED.endswith(texts.ASK_LOGIN)
     assert "📱 Compartir mi número" in texts.ASK_LOGIN
+    assert "📱 Compartir mi número" in texts.ASK_SIGNUP_PHONE
+    assert "distribuidor" not in texts.INTRO + texts.CONSENT_NOTICE + texts.QUICK_START
+
+
+def start_button(data: str):
+    query = SimpleNamespace(data=data, answer=FakeQuery().answer, edit_message_reply_markup=FakeQuery().edit_message_reply_markup)
+    return SimpleNamespace(callback_query=query, message=None, effective_chat=SimpleNamespace(id=555))
 
 
 class FakeQuery:
@@ -428,13 +448,52 @@ async def test_forwarded_contact_of_someone_else_is_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unregistered_phone_starts_registration_in_telegram(monkeypatch):
+async def test_signup_choice_then_phone_starts_registration(monkeypatch):
+    replies = login_with_phone(monkeypatch, None)
+    started = record_signups(monkeypatch)
+    await handlers.handle_start_choice(start_button("start:signup"), None)
+    assert replies == [texts.ASK_SIGNUP_PHONE]
+    await handlers.handle_contact(own_phone("+57 311 000 0000"), None)
+    assert started == [(555, "573110000000")]
+
+
+@pytest.mark.asyncio
+async def test_login_with_unknown_phone_does_not_register(monkeypatch):
+    replies = login_with_phone(monkeypatch, None)
+    started = record_signups(monkeypatch)
+    await handlers.handle_start_choice(start_button("start:login"), None)
+    await handlers.handle_contact(own_phone("+57 311 000 0000"), None)
+    # Dijo que ya tenía cuenta: no se le crea nada, se le avisa y se le ofrece registrarse.
+    assert started == []
+    assert replies == [texts.ASK_LOGIN, texts.PHONE_VERIFIED, texts.no_account_for_phone("+57 311 000 0000")]
+    # Si escoge registrarse, ya no tiene que volver a compartir el número.
+    await handlers.handle_start_choice(start_button("start:signup"), None)
+    assert started == [(555, "573110000000")]
+
+
+@pytest.mark.asyncio
+async def test_phone_without_choice_is_not_registered(monkeypatch):
     replies = login_with_phone(monkeypatch, None)
     started = record_signups(monkeypatch)
     await handlers.handle_contact(own_phone("+57 311 000 0000"), None)
-    # Ya no lo manda a la página: registra su tienda ahí mismo.
-    assert started == [(555, "573110000000")]
-    assert replies == []
+    assert started == []
+    assert replies[-1] == texts.no_account_for_phone("+57 311 000 0000")
+
+
+@pytest.mark.asyncio
+async def test_signup_choice_with_registered_phone_logs_in(monkeypatch):
+    store = phone_store()
+    replies = login_with_phone(monkeypatch, store)
+    started = record_signups(monkeypatch)
+    await handlers.handle_start_choice(start_button("start:signup"), None)
+    await handlers.handle_contact(own_phone(), None)
+    assert started == []
+    assert store.telegram_chat_id == 555
+    assert replies == [
+        texts.ASK_SIGNUP_PHONE, texts.PHONE_VERIFIED, texts.phone_has_store("Tienda Doña Marta"), texts.CONSENT_NOTICE,
+    ]
+
+
 
 
 @pytest.mark.asyncio
