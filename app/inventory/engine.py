@@ -15,8 +15,10 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.catalog_merge import match_item
 from app.models import (
     SUPPLIER_APPROVED,
+    Product,
     Receipt,
     Sale,
     StockCount,
@@ -440,6 +442,36 @@ def analyze_store(
     )
 
 
+async def _former_products(session: AsyncSession, store_id: int, items: list, known: dict[int, int]) -> dict[int, int]:
+    """Productos con historia en la tienda que ya no están en su catálogo (de un proveedor que dejó, o que el
+    proveedor desactivó) -> el artículo de hoy que es el mismo producto. Así, si el tendero deja a un proveedor
+    por otro más barato, las ventas, conteos y recibos de antes siguen contando en el mismo stock."""
+    if not items:
+        return {}
+    ids: set[int] = set()
+    for model in (StockCount, Sale, Receipt):
+        ids |= set((await session.scalars(select(model.product_id).where(model.store_id == store_id).distinct())).all())
+    ids |= set(
+        (
+            await session.scalars(
+                select(SuggestedOrderItem.product_id)
+                .join(SuggestedOrder, SuggestedOrder.id == SuggestedOrderItem.order_id)
+                .where(SuggestedOrder.store_id == store_id, SuggestedOrder.status == "sent")
+                .distinct()
+            )
+        ).all()
+    )
+    ids -= set(known)
+    if not ids:
+        return {}
+    mapping = {}
+    for product in (await session.scalars(select(Product).where(Product.id.in_(ids)))).all():
+        item = match_item(items, product)
+        if item is not None:
+            mapping[product.id] = item.preferred.product.id
+    return mapping
+
+
 async def load_store_analysis(
     session: AsyncSession, store_id: int, now: datetime | None = None
 ) -> StoreAnalysis | None:
@@ -457,6 +489,7 @@ async def load_store_analysis(
     # otros proveedores se cuentan en ese mismo artículo.
     items = await load_items(session, store)
     canonical = {offer.product.id: item.preferred.product.id for item in items for offer in item.offers}
+    canonical.update(await _former_products(session, store_id, items, canonical))
     products = sorted(
         (
             ProductInput(p.id, p.sku, p.name, p.units_per_case, Decimal(p.unit_price), p.distributor_id)

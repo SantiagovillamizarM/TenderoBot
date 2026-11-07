@@ -153,6 +153,13 @@ def group_offers(offers: list[Offer], chosen_product_ids: set[int] | None = None
     return sorted(items, key=lambda item: fold(item.name))
 
 
+def match_item(items: list[Item], product) -> Item | None:
+    """El artículo de hoy que es el mismo producto (de un proveedor que la tienda ya dejó, por ejemplo)."""
+    offer = Offer(product, product.distributor_id, "")
+    scored = [(m[0], item) for item in items if (m := _match(offer, item)) is not None]
+    return max(scored, key=lambda pair: pair[0])[1] if scored else None
+
+
 def find_item(items: list[Item], product_id: int) -> Item | None:
     return next((item for item in items if any(o.product.id == product_id for o in item.offers)), None)
 

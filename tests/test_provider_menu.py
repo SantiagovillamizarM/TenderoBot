@@ -172,7 +172,7 @@ async def test_command_lists_providers_with_buttons_for_new_ones(bot):
     text, markup = bot.replies[0]
     assert "✅ Proveedor 1" in text
     buttons = [b.text for row in markup.inline_keyboard for b in row]
-    assert buttons == ["⬜ Proveedor 2", "⬜ Proveedor 3", "📨 Enviar solicitudes"]
+    assert buttons == ["⬜ Proveedor 2", "⬜ Proveedor 3", "📨 Enviar solicitudes", "🚫 Dejar de trabajar con Proveedor 1"]
 
 
 @pytest.mark.asyncio

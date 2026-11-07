@@ -7,10 +7,19 @@ StoreSupplier cada vez que cambian, para que las dos fuentes nunca se desencuent
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import SUPPLIER_APPROVED, SUPPLIER_REJECTED, Store, StoreSupplier
+from app.models import (
+    SUPPLIER_APPROVED,
+    SUPPLIER_PENDING,
+    SUPPLIER_REJECTED,
+    PendingAction,
+    Product,
+    Store,
+    StoreProductChoice,
+    StoreSupplier,
+)
 
 MIRRORED_FIELDS = ("route_weekdays", "visit_weekdays", "lead_time_days", "delivery_days_set_at", "last_reminder_for")
 
@@ -86,6 +95,42 @@ def set_supplier_days(link: StoreSupplier, store: Store, days: list[int]) -> Non
         # Es el principal: la tienda guarda la misma copia (hasta el plan P6).
         store.visit_weekdays = link.visit_weekdays
         store.delivery_days_set_at = link.delivery_days_set_at
+
+
+async def end_supplier(session: AsyncSession, store: Store, distributor_id: int) -> str | None:
+    """El tendero deja de trabajar con un proveedor (o cancela la solicitud que le mandó).
+
+    Se borra el vínculo (puede volver a pedirle con /proveedores), el pedido que estaba armando con él y
+    sus productos escogidos como preferidos. Lo que ya le pidió no se toca: se recibe con /recibido. Si
+    era el proveedor principal, pasa a serlo el siguiente aceptado (o ninguno).
+    Devuelve el estado que tenía ("approved" o "pending"), o None si no había nada que terminar.
+    """
+    link = await session.scalar(
+        select(StoreSupplier).where(StoreSupplier.store_id == store.id, StoreSupplier.distributor_id == distributor_id)
+    )
+    if link is None or link.status not in (SUPPLIER_APPROVED, SUPPLIER_PENDING):
+        return None
+    status = link.status
+    await session.delete(link)
+    await session.execute(
+        delete(StoreProductChoice).where(
+            StoreProductChoice.store_id == store.id,
+            StoreProductChoice.product_id.in_(select(Product.id).where(Product.distributor_id == distributor_id)),
+        )
+    )
+    # Borrador del pedido con ese proveedor (app/bot/handlers.py: order_kind).
+    await session.execute(
+        delete(PendingAction).where(PendingAction.store_id == store.id, PendingAction.kind == f"order:{distributor_id}")
+    )
+    await session.flush()
+    if store.distributor_id == distributor_id:
+        remaining = await approved_suppliers(session, store.id)
+        following = remaining[0] if remaining else None
+        store.distributor_id = following.distributor_id if following else None
+        if following is not None:
+            for field in MIRRORED_FIELDS:
+                setattr(store, field, getattr(following, field))
+    return status
 
 
 async def approved_suppliers(session: AsyncSession, store_id: int) -> list[StoreSupplier]:

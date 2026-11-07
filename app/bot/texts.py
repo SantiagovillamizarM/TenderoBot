@@ -516,7 +516,36 @@ def providers_overview(city: str | None, options: list) -> str:
         rows += ["", "Marca los que te interesan y toca 📨 Enviar solicitudes. Puedes escoger varios."]
     else:
         rows += ["", "Por ahora no hay más proveedores que lleguen a tu zona."]
+    if any(option.status == "approved" for option in options):
+        rows.append("Si ya no quieres trabajar con alguno (por ejemplo, porque otro te vende más barato), "
+                    "tócalo abajo en 🚫 Dejar de trabajar con…")
     return "\n".join(rows)
+
+
+def end_supplier_question(name: str, approved: bool) -> str:
+    if not approved:
+        return f"¿Cancelar la solicitud que le enviaste a {name}? Ya no la verá en su panel."
+    return (
+        f"¿Seguro que quieres dejar de trabajar con {name}?\n\n"
+        f"• Ya no verás sus productos ni podrás pedirle por TenderoBot.\n"
+        f"• Se borra el pedido que estuvieras armando con {name}.\n"
+        f"• Lo que ya le pediste no se cancela: cuando llegue, confírmalo con /recibido.\n"
+        f"• {name} deja de ver los datos de tu tienda.\n"
+        "• Tu inventario no se pierde: si otro proveedor tuyo vende el mismo producto, sigue el mismo stock.\n\n"
+        "Si cambias de opinión, puedes volver a pedirle con /proveedores."
+    )
+
+
+def supplier_ended(name: str, approved: bool, remaining: int) -> str:
+    if not approved:
+        return f"↩️ Listo, cancelé tu solicitud a {name}."
+    text = f"👋 Listo, ya no trabajas con {name}."
+    if remaining == 0:
+        return text + "\n\nTe quedaste sin proveedores. Escribe /proveedores para escoger otro."
+    return text + " Tus pedidos ahora son solo con tus otros proveedores. Míralos con /catalogo."
+
+
+END_SUPPLIER_KEPT = "👍 Listo, sigues trabajando con ese proveedor."
 
 
 def providers_sent(names: list[str]) -> str:

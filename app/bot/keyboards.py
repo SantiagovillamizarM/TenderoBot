@@ -191,18 +191,37 @@ def _provider_data(selected: list[int], action: str) -> str:
     return f"prov:{','.join(str(i) for i in sorted(selected))}:{action}"
 
 
-def providers_keyboard(options: list, selected: list[int]) -> InlineKeyboardMarkup | None:
-    """Un botón por proveedor que se puede pedir (marcar/desmarcar) y "Enviar solicitudes"."""
+def providers_keyboard(options: list, selected: list[int], linked: list | None = None) -> InlineKeyboardMarkup | None:
+    """Un botón por proveedor que se puede pedir (marcar/desmarcar) y "Enviar solicitudes".
+
+    Debajo, uno por cada proveedor con el que ya trabaja (o al que le pidió) para dejarlo.
+    """
     rows = [
         [InlineKeyboardButton(("✅ " if option.id in selected else "⬜ ") + option.name,
                               callback_data=_provider_data(selected, str(option.id)))]
         for option in options
     ]
-    if not rows:
-        return None
-    label = f"📨 Enviar solicitudes ({len(selected)})" if selected else "📨 Enviar solicitudes"
-    rows.append([InlineKeyboardButton(label, callback_data=_provider_data(selected, "ok"))])
-    return InlineKeyboardMarkup(rows)
+    if rows:
+        label = f"📨 Enviar solicitudes ({len(selected)})" if selected else "📨 Enviar solicitudes"
+        rows.append([InlineKeyboardButton(label, callback_data=_provider_data(selected, "ok"))])
+    for option in linked or []:
+        label = (f"🚫 Dejar de trabajar con {option.name}" if option.status == "approved"
+                 else f"↩️ Cancelar solicitud a {option.name}")
+        rows.append([InlineKeyboardButton(label, callback_data=f"{END_PREFIX}:{option.id}")])
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+END_PREFIX = "provend"
+END_PATTERN = r"^provend:\d+(:(yes|no))?$"
+
+
+def end_supplier_keyboard(distributor_id: int, name: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(f"✅ Sí, dejar a {name}", callback_data=f"{END_PREFIX}:{distributor_id}:yes")],
+            [InlineKeyboardButton("❌ No, mejor no", callback_data=f"{END_PREFIX}:{distributor_id}:no")],
+        ]
+    )
 
 
 def providers_more_keyboard() -> InlineKeyboardMarkup:

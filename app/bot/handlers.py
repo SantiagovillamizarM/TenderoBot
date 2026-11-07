@@ -58,7 +58,7 @@ from app.phones import format_phone, normalize_phone
 from app.schemas import OrderChange, SaleLine, StockLine
 from app import catalog_merge
 from app.store_catalog import choose, load_items, store_products
-from app.suppliers import approved_suppliers, mirror_store_link, set_supplier_days
+from app.suppliers import approved_suppliers, end_supplier, mirror_store_link, set_supplier_days
 from app.usage_log import logged_task, set_task_info
 
 RATE_LIMIT_MAX = 20
@@ -254,8 +254,13 @@ async def show_providers(update: Update, session: AsyncSession, store: Store) ->
     await _reply(
         update,
         texts.providers_overview(store.city, options),
-        reply_markup=keyboards.providers_keyboard(selectable, []),
+        reply_markup=keyboards.providers_keyboard(selectable, [], _linked(options)),
     )
+
+
+def _linked(options: list) -> list:
+    """Proveedores con los que trabaja o a los que les pidió: se pueden dejar desde /proveedores."""
+    return [option for option in options if option.status in ("approved", "pending")][: provider_menu.MAX_OPTIONS]
 
 
 async def handle_providers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -306,7 +311,9 @@ async def handle_providers_button(update: Update, context: ContextTypes.DEFAULT_
             selected = sorted(set(selected) ^ {chosen}) if chosen in allowed else selected
             await query.answer()
             try:
-                await query.edit_message_reply_markup(reply_markup=keyboards.providers_keyboard(selectable, selected))
+                await query.edit_message_reply_markup(
+                    reply_markup=keyboards.providers_keyboard(selectable, selected, _linked(options))
+                )
             except Exception:
                 logger.info("No se pudieron actualizar los botones de proveedores")
             return
@@ -320,6 +327,47 @@ async def handle_providers_button(update: Update, context: ContextTypes.DEFAULT_
         await _reply(update, texts.providers_sent(sent), reply_markup=keyboards.providers_more_keyboard())
     else:
         await _reply(update, texts.STALE_BUTTON)
+
+
+async def handle_end_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """🚫 Dejar de trabajar con un proveedor (o cancelar la solicitud): primero se confirma."""
+    query = update.callback_query
+    chat_id = _chat_id(update)
+    if query is None or chat_id is None or not query.data:
+        return
+    await query.answer()
+    parts = query.data.split(":")
+    distributor_id = int(parts[1])
+    answer = parts[2] if len(parts) > 2 else None
+    async with session_scope() as session:
+        store = await get_store_by_chat(session, chat_id)
+        if store is None or store.consent_at is None:
+            await _ask_login(update)
+            return
+        option = next(
+            (o for o in await provider_menu.provider_options(session, store)
+             if o.id == distributor_id and o.status in ("approved", "pending")),
+            None,
+        )
+        if option is None:
+            await _remove_buttons(update)
+            await _reply(update, texts.STALE_BUTTON)
+            return
+        approved = option.status == "approved"
+        if answer is None:
+            await _reply(
+                update,
+                texts.end_supplier_question(option.name, approved),
+                reply_markup=keyboards.end_supplier_keyboard(option.id, option.name),
+            )
+            return
+        await _remove_buttons(update)
+        if answer == "no":
+            await _reply(update, texts.END_SUPPLIER_KEPT)
+            return
+        await end_supplier(session, store, distributor_id)
+        remaining = len(await approved_suppliers(session, store.id))
+        await _reply(update, texts.supplier_ended(option.name, approved, remaining))
 
 
 async def has_request_in_review(session: AsyncSession, chat_id: int) -> bool:
@@ -1825,6 +1873,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(handle_days, pattern=keyboards.DAYS_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_registration_button, pattern=keyboards.REG_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_providers_button, pattern=keyboards.PROVIDERS_PATTERN))
+    application.add_handler(CallbackQueryHandler(handle_end_supplier, pattern=keyboards.END_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_supplier_days, pattern=keyboards.SUPPLIER_DAYS_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_confirm_logout, pattern=f"^{keyboards.CONFIRM_LOGOUT}$"))
     application.add_handler(CallbackQueryHandler(handle_keep_session, pattern=f"^{keyboards.KEEP_SESSION}$"))
