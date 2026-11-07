@@ -1380,3 +1380,12 @@ input:disabled { opacity: 0.6; cursor: not-allowed; }
 .code-login { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
 .code-login input[type="email"] { flex: 1; min-width: 0; }
 .login-card .login-alt .small-btn { white-space: nowrap; }
+
+/* Títulos que separan grupos de tarjetas (p. ej. solicitudes desde Telegram y desde la página). */
+.section-title {
+  margin: 28px 0 6px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.section-title + p.muted { margin: 0 0 14px; }

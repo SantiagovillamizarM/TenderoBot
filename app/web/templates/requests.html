@@ -12,6 +12,52 @@
 
 {% if message %}<p class="notice">{{ message }}</p>{% endif %}
 
+{% if telegram_pending %}
+<h2 class="section-title">Desde Telegram</h2>
+<p class="muted">Tenderos que registraron su tienda en el bot y te escogieron como proveedor. Si aceptas, empiezan a pedirte; si rechazas, les contamos el motivo y pueden escoger a otro.</p>
+{% endif %}
+{% for link, s in telegram_pending %}
+<section class="card request-card" id="tienda-{{ link.id }}">
+  <div class="card-head">
+    <div>
+      <h2>{{ s.name }}</h2>
+      <span class="muted small">{{ s.owner_name }} · te escogió el {{ link.requested_at|local_dt }}</span>
+    </div>
+    <span class="badge badge-ok">Desde Telegram</span>
+  </div>
+
+  <dl class="facts">
+    {% if s.document_id %}<div><dt>Cédula o NIT</dt><dd>{{ s.document_id }}</dd></div>{% endif %}
+    {% if s.owner_phone %}<div><dt>Celular</dt><dd>{{ s.owner_phone|phone }}</dd></div>{% endif %}
+    <div><dt>Dirección</dt><dd>{{ s.address or "Sin dirección" }}{% if s.neighborhood %}, {{ s.neighborhood }}{% endif %}{% if s.city %}, {{ s.city }}{% endif %}
+      {% if s.latitude is not none %}<br><a href="https://www.openstreetmap.org/?mlat={{ s.latitude }}&amp;mlon={{ s.longitude }}#map=18/{{ s.latitude }}/{{ s.longitude }}" target="_blank" rel="noopener">Ver en el mapa</a>{% endif %}</dd></div>
+    {% if s.receiving_hours %}<div><dt>Horario para recibir</dt><dd>{{ s.receiving_hours|hours }}{{ hours.hours_bar(s.receiving_hours) }}</dd></div>{% endif %}
+    {% if s.payment_method %}<div><dt>Forma de pago</dt><dd>{{ payment_methods[s.payment_method] }}</dd></div>{% endif %}
+  </dl>
+
+  {% if link_error_for == link.id and error %}<p class="alert">{{ error }}</p>{% endif %}
+  <div class="decision">
+    <form method="post" action="/panel/solicitudes/tienda/{{ link.id }}/aprobar" class="form-grid">
+      <h3 class="wide">Aceptar</h3>
+      {{ fields.route_days_picker([], 1) }}
+      <div class="actions">
+        <button type="submit" class="primary">Aceptar tienda <span class="btn-arrow">{{ icon.arrow() }}</span></button>
+      </div>
+    </form>
+    <form method="post" action="/panel/solicitudes/tienda/{{ link.id }}/rechazar" class="form-grid">
+      <h3 class="wide">Rechazar</h3>
+      <label class="wide">Motivo (el tendero lo va a leer)
+        <textarea name="reason" maxlength="300" rows="3" placeholder="Por ejemplo: nuestra ruta aún no llega a tu barrio." required></textarea>
+      </label>
+      <div class="actions wide">
+        <button type="submit" class="btn btn-ghost">Rechazar solicitud</button>
+      </div>
+    </form>
+  </div>
+</section>
+{% endfor %}
+
+{% if telegram_pending %}<h2 class="section-title">Desde la página</h2>{% endif %}
 {% for r in pending %}
 <section class="card request-card" id="solicitud-{{ r.id }}">
   <div class="card-head">
@@ -54,8 +100,34 @@
   </div>
 </section>
 {% else %}
-<section class="card"><p class="empty">No hay solicitudes por revisar.</p></section>
+{% if not telegram_pending %}<section class="card"><p class="empty">No hay solicitudes por revisar.</p></section>{% endif %}
 {% endfor %}
+
+{% if telegram_decided %}
+<section class="card">
+  <div class="card-head">
+    <h2>Respondidas desde Telegram</h2>
+    <span class="muted">Las últimas {{ telegram_decided|length }}</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tienda</th><th>Respuesta</th><th>Fecha</th><th>Aviso al tendero</th></tr></thead>
+      <tbody>
+        {% for link, s in telegram_decided %}
+        <tr>
+          <td><strong>{{ s.name }}</strong><br><span class="muted small">{{ s.owner_name }}{% if s.city %} · {{ s.city }}{% endif %}</span></td>
+          <td>{% if link.status == 'approved' %}<span class="badge badge-ok">Aceptada</span>
+              {% else %}<span class="badge badge-risk">Rechazada</span><br><span class="muted small">{{ link.rejection_reason }}</span>{% endif %}</td>
+          <td class="muted">{{ link.decided_at|local_dt }}</td>
+          <td>{% if link.decision_notified_at %}<span class="muted small">Enviado por Telegram</span>
+              {% else %}<span class="muted small">Pendiente</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 
 {% if decided %}
 <section class="card">

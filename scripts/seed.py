@@ -36,6 +36,9 @@ from app.suppliers import mirror_store_link
 from app.web.auth import password_problem
 
 DISTRIBUTOR_NAME = "Distribuidora El Barrio"
+DISTRIBUTOR_CITY = "Bucaramanga"
+DISTRIBUTOR_COVERAGE = "Bucaramanga, Floridablanca, Girón, Piedecuesta"
+DISTRIBUTOR_CATEGORIES = "bebidas,lacteos,abarrotes,snacks,panaderia,aseo"
 
 # (sku, nombre, otros nombres, presentación, unidades por caja, precio por unidad)
 PRODUCTS = [
@@ -246,7 +249,13 @@ async def seed(session: AsyncSession, demo_history: bool = False) -> None:
         await session.delete(existing)
         await session.flush()
 
-    distributor = Distributor(name=DISTRIBUTOR_NAME)
+    distributor = Distributor(
+        name=DISTRIBUTOR_NAME,
+        # Zona y categorías: con esto aparece en /proveedores para las tiendas de esas ciudades.
+        city=DISTRIBUTOR_CITY,
+        coverage=DISTRIBUTOR_COVERAGE,
+        categories=DISTRIBUTOR_CATEGORIES,
+    )
     session.add(distributor)
     await session.flush()
 

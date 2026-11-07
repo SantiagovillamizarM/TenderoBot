@@ -161,3 +161,68 @@ def registration_confirm_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+# --- /proveedores ---------------------------------------------------------------------
+
+PROVIDERS_PATTERN = r"^prov:[0-9,]*:(\d+|ok|list|done)$"
+
+
+def _provider_data(selected: list[int], action: str) -> str:
+    return f"prov:{','.join(str(i) for i in sorted(selected))}:{action}"
+
+
+def providers_keyboard(options: list, selected: list[int]) -> InlineKeyboardMarkup | None:
+    """Un botón por proveedor que se puede pedir (marcar/desmarcar) y "Enviar solicitudes"."""
+    rows = [
+        [InlineKeyboardButton(("✅ " if option.id in selected else "⬜ ") + option.name,
+                              callback_data=_provider_data(selected, str(option.id)))]
+        for option in options
+    ]
+    if not rows:
+        return None
+    label = f"📨 Enviar solicitudes ({len(selected)})" if selected else "📨 Enviar solicitudes"
+    rows.append([InlineKeyboardButton(label, callback_data=_provider_data(selected, "ok"))])
+    return InlineKeyboardMarkup(rows)
+
+
+def providers_more_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("➕ Agregar otro", callback_data="prov::list"),
+                InlineKeyboardButton("👍 Por ahora no", callback_data="prov::done"),
+            ]
+        ]
+    )
+
+
+def parse_providers_callback(data: str) -> tuple[list[int], str]:
+    _, raw, action = data.split(":")
+    return [int(part) for part in raw.split(",") if part.isdigit()], action
+
+
+# --- Días de entrega con un proveedor (cada tienda puede tener varios) -----------------
+
+SUPPLIER_DAYS_PATTERN = r"^sdays:\d+:[0-6]*:([0-6]|ok)$"
+
+
+def supplier_days_keyboard(link_id: int, route_days: list[int], selected: list[int]) -> InlineKeyboardMarkup:
+    marked = "".join(str(d) for d in sorted(selected))
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"{'✅' if day in selected else '⬜'} {WEEKDAY_NAMES[day]}",
+                callback_data=f"sdays:{link_id}:{marked}:{day}",
+            )
+        ]
+        for day in route_days
+    ]
+    rows.append([InlineKeyboardButton("Listo", callback_data=f"sdays:{link_id}:{marked}:ok")])
+    return InlineKeyboardMarkup(rows)
+
+
+def parse_supplier_days_callback(data: str) -> tuple[int, list[int], str]:
+    """'sdays:12:04:2' -> (12, [0, 4], '2')"""
+    _prefix, link_id, marked, action = data.split(":")
+    return int(link_id), sorted({int(d) for d in marked}), action

@@ -32,8 +32,11 @@ from app.models import (
     StoreRequest,
     SuggestedOrder,
     SuggestedOrderItem,
+    StoreSupplier,
+    SUPPLIER_PENDING,
 )
-from app.suppliers import mirror_store_link
+from app.bot.supplier_notify import notify_supplier_decision
+from app.suppliers import approve_supplier, mirror_store_link, reject_supplier
 from app.onboarding import DecisionError, approve_request, notify_decision, parse_approval, parse_rejection, reject_request
 from app.inventory.orders import cap_to_available, order_total, to_order_lines
 from app.phones import format_phone, normalize_phone
@@ -452,13 +455,14 @@ async def demand(
 REQUEST_MESSAGES = {
     "aprobada": "Solicitud aprobada: la tienda quedó creada y se le avisó al tendero.",
     "rechazada": "Solicitud rechazada. Se le avisó al tendero con el motivo.",
+    "aceptada": "Aceptaste a la tienda. Se le avisó por Telegram para que escoja sus días de entrega contigo.",
 }
 RECENT_DECISIONS = 20
 
 
 async def _requests_page(
     request: Request, session: AsyncSession, distributor_id: int, error_for: int | None = None,
-    error: str | None = None, status_code: int = status.HTTP_200_OK,
+    error: str | None = None, status_code: int = status.HTTP_200_OK, link_error_for: int | None = None,
 ):
     pending = (
         await session.scalars(
@@ -475,12 +479,38 @@ async def _requests_page(
             .limit(RECENT_DECISIONS)
         )
     ).all()
+    # Tiendas que se registraron en Telegram y le pidieron trabajar con este proveedor.
+    telegram_pending = (
+        await session.execute(
+            select(StoreSupplier, Store)
+            .join(Store, Store.id == StoreSupplier.store_id)
+            .where(StoreSupplier.distributor_id == distributor_id, StoreSupplier.status == SUPPLIER_PENDING)
+            .order_by(StoreSupplier.requested_at)
+        )
+    ).all()
+    telegram_decided = (
+        await session.execute(
+            select(StoreSupplier, Store)
+            .join(Store, Store.id == StoreSupplier.store_id)
+            .where(
+                StoreSupplier.distributor_id == distributor_id,
+                StoreSupplier.status != SUPPLIER_PENDING,
+                # Las de antes de poder escoger proveedores no son solicitudes: no se listan.
+                StoreSupplier.decision_notified_at.is_distinct_from(StoreSupplier.decided_at),
+            )
+            .order_by(StoreSupplier.decided_at.desc())
+            .limit(RECENT_DECISIONS)
+        )
+    ).all()
     context = {
         "active": "requests",
         "pending": pending,
         "decided": decided,
+        "telegram_pending": telegram_pending,
+        "telegram_decided": telegram_decided,
         "message": REQUEST_MESSAGES.get(request.query_params.get("ok", "")),
         "error_for": error_for,
+        "link_error_for": link_error_for,
         "error": error,
     }
     return templates.TemplateResponse(request, "requests.html", context, status_code=status_code)
@@ -553,6 +583,72 @@ async def request_reject(
         )
     await session.commit()
     _notify_request(request, background, request_id)
+    return RedirectResponse("/panel/solicitudes?ok=rechazada", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- Solicitudes que llegan desde Telegram (/proveedores) -------------------------------
+
+
+async def _store_link(session: AsyncSession, distributor_id: int, link_id: int) -> tuple[StoreSupplier, Store] | None:
+    """La solicitud pendiente de una tienda a ESTE proveedor (404 si es de otro; None si ya se decidió)."""
+    link = await session.get(StoreSupplier, link_id)
+    if link is None or link.distributor_id != distributor_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if link.status != SUPPLIER_PENDING:
+        return None
+    return link, await session.get(Store, link.store_id)
+
+
+def _notify_link(request: Request, background: BackgroundTasks, link_id: int) -> None:
+    telegram_app = getattr(request.app.state, "telegram_app", None)
+    if telegram_app is not None:
+        background.add_task(notify_supplier_decision, telegram_app.bot, link_id)
+
+
+@router.post("/solicitudes/tienda/{link_id}/aprobar", response_class=HTMLResponse)
+async def store_link_approve(
+    link_id: int,
+    request: Request,
+    background: BackgroundTasks,
+    distributor_id: int = Depends(require_distributor),
+    session: AsyncSession = Depends(get_session),
+):
+    found = await _store_link(session, distributor_id, link_id)
+    if found is None:  # ya la decidió (doble clic u otra pestaña)
+        return RedirectResponse("/panel/solicitudes", status_code=status.HTTP_303_SEE_OTHER)
+    link, store = found
+    raw = await request.form()
+    try:
+        approval = parse_approval([str(d) for d in raw.getlist("route_days")], str(raw.get("lead_time_days", "")))
+    except DecisionError as exc:
+        return await _requests_page(request, session, distributor_id, link_error_for=link_id, error=str(exc),
+                                    status_code=status.HTTP_400_BAD_REQUEST)
+    approve_supplier(link, store, approval.route_days, approval.lead_time_days)
+    await session.commit()
+    _notify_link(request, background, link_id)
+    return RedirectResponse("/panel/solicitudes?ok=aceptada", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/solicitudes/tienda/{link_id}/rechazar", response_class=HTMLResponse)
+async def store_link_reject(
+    link_id: int,
+    request: Request,
+    background: BackgroundTasks,
+    reason: str = Form(""),
+    distributor_id: int = Depends(require_distributor),
+    session: AsyncSession = Depends(get_session),
+):
+    found = await _store_link(session, distributor_id, link_id)
+    if found is None:
+        return RedirectResponse("/panel/solicitudes", status_code=status.HTTP_303_SEE_OTHER)
+    link, _store = found
+    try:
+        reject_supplier(link, parse_rejection(reason))
+    except DecisionError as exc:
+        return await _requests_page(request, session, distributor_id, link_error_for=link_id, error=str(exc),
+                                    status_code=status.HTTP_400_BAD_REQUEST)
+    await session.commit()
+    _notify_link(request, background, link_id)
     return RedirectResponse("/panel/solicitudes?ok=rechazada", status_code=status.HTTP_303_SEE_OTHER)
 
 

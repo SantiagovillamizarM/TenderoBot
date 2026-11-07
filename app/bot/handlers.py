@@ -32,12 +32,13 @@ from app.ai.grok_client import (
 from app.ai.matching import best_product_match, match_order_changes, match_sale_lines, match_stock_lines
 from app.ai.prompts import AGENT_SYSTEM_PROMPT
 from app.ai.tools import StoreActions, build_tools
-from app.bot import keyboards, registration, texts
+from app.bot import keyboards, provider_menu, registration, texts
 from app.config import get_settings
 from app.db import SessionLocal
 from app.inventory.engine import delivery_schedule, load_store_analysis, parse_visit_weekdays
 from app.inventory.orders import apply_order_changes, cap_to_available, order_total, to_order_lines
 from app.models import (
+    SUPPLIER_APPROVED,
     Distributor,
     PendingAction,
     Product,
@@ -49,11 +50,12 @@ from app.models import (
     SuggestedOrder,
     StoreRequest,
     SuggestedOrderItem,
+    StoreSupplier,
 )
 
 from app.phones import normalize_phone
 from app.schemas import OrderChange, SaleLine, StockLine
-from app.suppliers import mirror_store_link
+from app.suppliers import approved_suppliers, mirror_store_link, set_supplier_days
 from app.usage_log import logged_task, set_task_info
 
 RATE_LIMIT_MAX = 20
@@ -216,13 +218,92 @@ async def handle_registration_button(update: Update, context: ContextTypes.DEFAU
         elif data == keyboards.REG_RESTART:
             await registration.restart(signup, say)
         else:
-            await registration.confirm(session, signup, say)
+            store = await registration.confirm(session, signup, say)
+            if store is not None:
+                await _remove_buttons(update)
+                await show_providers(update, session, store)
+                return
     await _remove_buttons(update)
 
 
 async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Durante el registro, /cancelar lo atiende require_link. Aquí solo llega un chat con tienda.
     await _reply(update, texts.NOTHING_TO_CANCEL)
+
+
+async def show_providers(update: Update, session: AsyncSession, store: Store) -> None:
+    """Lista de proveedores que llegan a la tienda, con botones para pedirles trabajar juntos."""
+    options = await provider_menu.provider_options(session, store)
+    selectable = [option for option in options if option.selectable][: provider_menu.MAX_OPTIONS]
+    await _reply(
+        update,
+        texts.providers_overview(store.city, options),
+        reply_markup=keyboards.providers_keyboard(selectable, []),
+    )
+
+
+async def handle_providers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/proveedores: también para una tienda que todavía no tiene ninguno."""
+    chat_id = _chat_id(update)
+    if chat_id is None:
+        return
+    async with session_scope() as session:
+        store = await get_store_by_chat(session, chat_id)
+        if store is None:
+            await _ask_login(update)
+            return
+        if store.consent_at is None:
+            await _reply(update, texts.NEED_CONSENT, reply_markup=keyboards.consent_keyboard())
+            return
+        await show_providers(update, session, store)
+
+
+async def handle_providers_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Marcar/desmarcar proveedores, enviar las solicitudes, agregar otro o terminar."""
+    query = update.callback_query
+    chat_id = _chat_id(update)
+    if query is None or chat_id is None or not query.data:
+        return
+    selected, action = keyboards.parse_providers_callback(query.data)
+    async with session_scope() as session:
+        store = await get_store_by_chat(session, chat_id)
+        if store is None or store.consent_at is None:
+            await query.answer()
+            await _ask_login(update)
+            return
+        if action == "done":
+            await query.answer()
+            await _remove_buttons(update)
+            await _reply(update, texts.PROVIDERS_DONE)
+            return
+        if action == "list":
+            await query.answer()
+            await _remove_buttons(update)
+            await show_providers(update, session, store)
+            return
+        options = await provider_menu.provider_options(session, store)
+        selectable = [option for option in options if option.selectable][: provider_menu.MAX_OPTIONS]
+        allowed = {option.id for option in selectable}
+        selected = [i for i in selected if i in allowed]
+        if action != "ok":
+            chosen = int(action)
+            selected = sorted(set(selected) ^ {chosen}) if chosen in allowed else selected
+            await query.answer()
+            try:
+                await query.edit_message_reply_markup(reply_markup=keyboards.providers_keyboard(selectable, selected))
+            except Exception:
+                logger.info("No se pudieron actualizar los botones de proveedores")
+            return
+        if not selected:
+            await query.answer(texts.PROVIDERS_PICK_ONE, show_alert=True)
+            return
+        await query.answer()
+        sent = await provider_menu.request_providers(session, store, selected)
+    await _remove_buttons(update)
+    if sent:
+        await _reply(update, texts.providers_sent(sent), reply_markup=keyboards.providers_more_keyboard())
+    else:
+        await _reply(update, texts.STALE_BUTTON)
 
 
 async def has_request_in_review(session: AsyncSession, chat_id: int) -> bool:
@@ -448,6 +529,48 @@ async def handle_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await mirror_store_link(session, store)
     await _remove_buttons(update)
     await _reply(update, texts.days_saved(selected))
+
+
+async def handle_supplier_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Días de entrega con un proveedor que acaba de aceptar (botones del aviso de aceptación)."""
+    query = update.callback_query
+    chat_id = _chat_id(update)
+    if query is None or chat_id is None or not query.data:
+        return
+    link_id, selected, action = keyboards.parse_supplier_days_callback(query.data)
+    async with session_scope() as session:
+        store = await get_store_by_chat(session, chat_id)
+        link = await session.get(StoreSupplier, link_id) if store is not None else None
+        if store is None or link is None or link.store_id != store.id or link.status != SUPPLIER_APPROVED:
+            await query.answer()
+            await _stale_button(update)
+            return
+        if link.delivery_days_set_at is not None:
+            await query.answer()  # botón viejo: los días con este proveedor ya quedaron escogidos
+            await _remove_buttons(update)
+            return
+        allowed = parse_visit_weekdays(link.route_weekdays or "") or list(range(7))
+        selected = [day for day in selected if day in allowed]
+        if action != "ok":
+            day = int(action)
+            selected = sorted(set(selected) ^ {day}) if day in allowed else selected
+            await query.answer()
+            try:
+                await query.edit_message_reply_markup(
+                    reply_markup=keyboards.supplier_days_keyboard(link.id, allowed, selected)
+                )
+            except Exception:
+                logger.info("No se pudieron actualizar los botones de días del proveedor")
+            return
+        if not selected:
+            await query.answer(texts.DAYS_EMPTY, show_alert=True)
+            return
+        await query.answer()
+        set_supplier_days(link, store, selected)
+        distributor = await session.scalar(select(Distributor.name).where(Distributor.id == link.distributor_id))
+        first = len(await approved_suppliers(session, store.id)) == 1
+    await _remove_buttons(update)
+    await _reply(update, texts.supplier_days_saved(distributor or "Tu proveedor", selected, first))
 
 
 async def handle_reject_consent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1493,6 +1616,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("ayuda", handle_help))
     application.add_handler(CommandHandler("salir", handle_logout))
     application.add_handler(CommandHandler("cancelar", handle_cancel))
+    application.add_handler(CommandHandler("proveedores", handle_providers))
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
     application.add_handler(CallbackQueryHandler(handle_consent, pattern=f"^{keyboards.ACCEPT_CONSENT}$"))
     application.add_handler(
@@ -1500,6 +1624,8 @@ def register_handlers(application: Application) -> None:
     )
     application.add_handler(CallbackQueryHandler(handle_days, pattern=keyboards.DAYS_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_registration_button, pattern=keyboards.REG_PATTERN))
+    application.add_handler(CallbackQueryHandler(handle_providers_button, pattern=keyboards.PROVIDERS_PATTERN))
+    application.add_handler(CallbackQueryHandler(handle_supplier_days, pattern=keyboards.SUPPLIER_DAYS_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_confirm_logout, pattern=f"^{keyboards.CONFIRM_LOGOUT}$"))
     application.add_handler(CallbackQueryHandler(handle_keep_session, pattern=f"^{keyboards.KEEP_SESSION}$"))
     application.add_handler(CallbackQueryHandler(handle_confirm_sales, pattern=keyboards.draft_pattern(keyboards.CONFIRM_SALES)))

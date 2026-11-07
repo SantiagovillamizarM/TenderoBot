@@ -21,6 +21,7 @@ from app.db import SessionLocal
 from app.inventory.engine import COLOMBIA_TZ, DeliverySchedule, delivery_schedule
 from app.models import Distributor, Store, SuggestedOrder
 from app.onboarding import send_request_followups
+from app.bot.supplier_notify import send_supplier_followups
 from app.suppliers import mirror_store_link
 
 REMINDER_HOUR = 9
@@ -138,6 +139,12 @@ async def reminder_loop(bot: Bot) -> None:
                 logger.info("Avisos de solicitudes de acceso enviados: %s", sent)
         except Exception:
             logger.exception("Falló la revisión de solicitudes de acceso")
+        try:
+            sent = await send_supplier_followups(bot)
+            if sent:
+                logger.info("Avisos de proveedores reenviados: %s", sent)
+        except Exception:
+            logger.exception("Falló el reintento de avisos de proveedores")
         try:
             sent = await send_idle_notices(bot)
             if sent:

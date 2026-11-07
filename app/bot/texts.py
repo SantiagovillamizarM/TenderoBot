@@ -75,6 +75,7 @@ HELP = (
     "/pedido – qué pedirle al distribuidor (puedes cambiarlo antes de enviarlo)\n"
     "/recibido – avisa que llegó el pedido\n"
     "/catalogo – lo que tiene tu proveedor y sus precios\n"
+    "/proveedores – escoger con qué proveedores trabajar\n"
     "/salir – cerrar la sesión de tu tienda en este chat\n"
     "/ayuda – ver este mensaje"
 )
@@ -451,3 +452,69 @@ def registration_done(store_name: str) -> str:
         "Ahora escoge con qué proveedores quieres trabajar: escribe /proveedores. "
         "Cada uno revisa tu solicitud y te aviso por aquí cuando te acepte."
     )
+
+
+# --- /proveedores -------------------------------------------------------------------
+
+PROVIDERS_PICK_ONE = "Marca al menos un proveedor."
+PROVIDERS_DONE = "👍 Listo. Cuando quieras trabajar con otro proveedor, escribe /proveedores."
+
+
+def providers_overview(city: str | None, options: list) -> str:
+    """Lista de /proveedores: con quién trabaja, qué está en revisión y a quién le puede pedir."""
+    where = f" que llegan a {city}" if city else ""
+    rows = [f"🤝 Proveedores{where}:", ""]
+    for option in options:
+        if option.status == "approved":
+            rows.append(f"✅ {option.name}: ya trabajas con este proveedor")
+            continue
+        if option.status == "pending":
+            rows.append(f"⏳ {option.name}: tu solicitud está en revisión")
+            continue
+        detail = ", ".join(option.categories) or "sin categorías registradas"
+        line = f"• {option.name}: {detail} · {option.products} productos"
+        if not option.zone_known:
+            line += " (no registró su zona de reparto)"
+        if option.status == "rejected":
+            reason = f": {option.rejection_reason}" if option.rejection_reason else ""
+            line += f"\n   Antes no te aceptó{reason}. Puedes volver a pedirle."
+        rows.append(line)
+    if not options:
+        rows.append("Por ahora no hay proveedores en TenderoBot que lleguen a tu zona. Vuelve a mirar más adelante.")
+    elif any(option.status in (None, "rejected") for option in options):
+        rows += ["", "Marca los que te interesan y toca 📨 Enviar solicitudes. Puedes escoger varios."]
+    else:
+        rows += ["", "Por ahora no hay más proveedores que lleguen a tu zona."]
+    return "\n".join(rows)
+
+
+def providers_sent(names: list[str]) -> str:
+    who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " y " + names[-1]
+    return (
+        f"📨 Le enviaste tu solicitud a {who}.\n"
+        "Cada uno revisa tu tienda y si su ruta llega a tu barrio. Te aviso por aquí apenas te respondan.\n\n"
+        "¿Quieres agregar otro proveedor?"
+    )
+
+
+# --- Respuesta de un proveedor a la solicitud del tendero ------------------------------
+
+
+def supplier_approved(distributor: str, route_days: list[int]) -> str:
+    return (
+        f"✅ ¡Buenas noticias! {distributor} aceptó tu solicitud. "
+        f"Su camión pasa por tu zona los {join_days(route_days)}.\n\n"
+        "¿Qué días quieres recibir su mercancía? Marca uno o varios y pulsa Listo."
+    )
+
+
+def supplier_rejected(distributor: str, reason: str) -> str:
+    return (
+        f"❌ {distributor} no aceptó tu solicitud.\nMotivo: {reason}\n\n"
+        "Puedes escoger otros proveedores con /proveedores."
+    )
+
+
+def supplier_days_saved(distributor: str, days: list[int], first_supplier: bool) -> str:
+    text = f"Listo. {distributor} te lleva la mercancía los {join_days(days)}."
+    return text + "\n\n" + QUICK_START if first_supplier else text

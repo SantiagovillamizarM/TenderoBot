@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import SUPPLIER_APPROVED, Store, StoreSupplier
+from app.models import SUPPLIER_APPROVED, SUPPLIER_REJECTED, Store, StoreSupplier
 
 MIRRORED_FIELDS = ("route_weekdays", "visit_weekdays", "lead_time_days", "delivery_days_set_at", "last_reminder_for")
 
@@ -44,6 +44,48 @@ async def mirror_store_link(session: AsyncSession, store: Store) -> StoreSupplie
     for field in MIRRORED_FIELDS:
         setattr(link, field, getattr(store, field))
     return link
+
+
+def approve_supplier(link: StoreSupplier, store: Store, route_days: list[int], lead_time_days: int) -> None:
+    """El proveedor acepta trabajar con la tienda, con sus días de ruta y su anticipación.
+
+    Los días de entrega los escoge el tendero en el bot (hasta entonces quedan todos los de la ruta).
+    El primer proveedor que acepta queda como principal de la tienda: así ventas, /pedido y demás
+    funcionan ya con el código de hoy (el pedido por proveedor llega en el plan P6).
+    """
+    days = ",".join(str(day) for day in sorted(set(route_days)))
+    now = datetime.now(UTC)
+    link.status = SUPPLIER_APPROVED
+    link.decided_at = now
+    link.rejection_reason = None
+    link.decision_notified_at = None
+    link.route_weekdays = days
+    link.visit_weekdays = days
+    link.lead_time_days = lead_time_days
+    link.delivery_days_set_at = None
+    if store.distributor_id is None:
+        store.distributor_id = link.distributor_id
+        store.route_weekdays = days
+        store.visit_weekdays = days
+        store.lead_time_days = lead_time_days
+        store.delivery_days_set_at = None
+
+
+def reject_supplier(link: StoreSupplier, reason: str) -> None:
+    link.status = SUPPLIER_REJECTED
+    link.decided_at = datetime.now(UTC)
+    link.rejection_reason = reason
+    link.decision_notified_at = None
+
+
+def set_supplier_days(link: StoreSupplier, store: Store, days: list[int]) -> None:
+    """Días de entrega que escoge el tendero con este proveedor (dentro de su ruta)."""
+    link.visit_weekdays = ",".join(str(day) for day in sorted(set(days)))
+    link.delivery_days_set_at = datetime.now(UTC)
+    if store.distributor_id == link.distributor_id:
+        # Es el principal: la tienda guarda la misma copia (hasta el plan P6).
+        store.visit_weekdays = link.visit_weekdays
+        store.delivery_days_set_at = link.delivery_days_set_at
 
 
 async def approved_suppliers(session: AsyncSession, store_id: int) -> list[StoreSupplier]:
