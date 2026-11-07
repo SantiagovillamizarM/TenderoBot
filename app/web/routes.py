@@ -33,6 +33,7 @@ from app.models import (
     SuggestedOrder,
     SuggestedOrderItem,
 )
+from app.suppliers import mirror_store_link
 from app.onboarding import DecisionError, approve_request, notify_decision, parse_approval, parse_rejection, reject_request
 from app.inventory.orders import cap_to_available, order_total, to_order_lines
 from app.phones import format_phone, normalize_phone
@@ -270,6 +271,7 @@ async def store_create(
     days = ",".join(str(day) for day in data.pop("route_days"))
     store = Store(distributor_id=distributor_id, route_weekdays=days, visit_weekdays=days, **data)
     session.add(store)
+    await mirror_store_link(session, store)
     await session.commit()
     return RedirectResponse(f"/panel/tiendas/{store.id}?datos=creada", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -387,6 +389,7 @@ async def store_data(
         store.visit_weekdays = store.route_weekdays
         store.delivery_days_set_at = None
         message = "dias"
+    await mirror_store_link(session, store)
     await session.commit()
     return RedirectResponse(f"/panel/tiendas/{store.id}?datos={message}", status_code=status.HTTP_303_SEE_OTHER)
 

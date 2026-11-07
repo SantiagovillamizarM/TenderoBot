@@ -9,7 +9,7 @@ import pytest
 
 from app import onboarding
 from app.bot import handlers, texts
-from app.models import Store
+from app.models import Store, StoreSupplier
 from app.web.store_forms import parse_coordinate, parse_document, parse_store_form, parse_store_request
 
 VALID_REQUEST = {
@@ -124,10 +124,14 @@ class ApproveSession:
 
 @pytest.mark.asyncio
 async def test_approve_creates_store_linked_to_the_chat_that_asked():
-    session = ApproveSession([None, None])
+    # Respuestas: celular ocupado, chat ocupado, proveedor de la tienda ya existente.
+    session = ApproveSession([None, None, None])
     request = store_request()
     store = await onboarding.approve_request(session, request, onboarding.parse_approval(["0", "3"], "1"))
     assert isinstance(store, Store)
+    link = next(row for row in session.added if isinstance(row, StoreSupplier))
+    assert (link.store_id, link.distributor_id, link.status) == (99, store.distributor_id, "approved")
+    assert (link.route_weekdays, link.visit_weekdays, link.lead_time_days) == ("0,3", "0,3", 1)
     assert (store.owner_phone, store.telegram_chat_id) == ("573001234567", 555)
     assert store.route_weekdays == "0,3"
     assert store.consent_at is None  # el permiso de datos se pide en el bot

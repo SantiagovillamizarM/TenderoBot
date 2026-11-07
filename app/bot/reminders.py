@@ -21,6 +21,7 @@ from app.db import SessionLocal
 from app.inventory.engine import COLOMBIA_TZ, DeliverySchedule, delivery_schedule
 from app.models import Distributor, Store, SuggestedOrder
 from app.onboarding import send_request_followups
+from app.suppliers import mirror_store_link
 
 REMINDER_HOUR = 9
 CHECK_INTERVAL_SECONDS = 600
@@ -80,6 +81,7 @@ async def send_due_reminders(bot: Bot, now: datetime | None = None) -> int:
                     logger.warning("No se pudo mandar el recordatorio a la tienda %s", store.id)
                     continue
             store.last_reminder_for = schedule.next_delivery
+            await mirror_store_link(session, store)
         await session.commit()
     return sent
 

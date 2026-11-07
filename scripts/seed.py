@@ -32,6 +32,7 @@ from app.models import (
     SuggestedOrderItem,
 )
 from app.roles import email_role, other_role_error
+from app.suppliers import mirror_store_link
 from app.web.auth import password_problem
 
 DISTRIBUTOR_NAME = "Distribuidora El Barrio"
@@ -290,9 +291,12 @@ async def seed(session: AsyncSession, demo_history: bool = False) -> None:
             )
         )
     session.add_all(stores)
+    await session.flush()
+    # Cada tienda queda con su proveedor aceptado (tabla de proveedores de la tienda).
+    for store in stores:
+        await mirror_store_link(session, store)
 
     if demo_history:
-        await session.flush()
         today = datetime.now(timezone.utc).astimezone(COLOMBIA_TZ).date()
         # Semilla fija: la demo sale igual cada vez que se corre.
         rng = random.Random(1581)

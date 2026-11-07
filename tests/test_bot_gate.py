@@ -212,10 +212,18 @@ async def test_days_ignores_days_outside_route(monkeypatch):
 async def test_days_ok_saves_selection(monkeypatch):
     store = days_store()
     replies = patch_store(monkeypatch, store)
+    mirrored = []
+
+    async def mirror(session, mirrored_store):
+        mirrored.append((mirrored_store.visit_weekdays, mirrored_store.delivery_days_set_at))
+
+    monkeypatch.setattr(handlers, "mirror_store_link", mirror)
     update = days_update("days:04:ok")
     await handlers.handle_days(update, None)
     assert store.visit_weekdays == "0,4"
     assert store.delivery_days_set_at is not None
+    # Los días quedan también en el proveedor de la tienda.
+    assert mirrored == [("0,4", store.delivery_days_set_at)]
     assert update.callback_query.removed
     assert replies == [texts.days_saved([0, 4])]
 

@@ -20,6 +20,7 @@ from app.emails import Email, approved_email, rejected_email
 from app.emails import reminder_email as build_reminder_email
 from app.mailer import email_enabled, send_email
 from app.models import Distributor, Store, StoreRequest
+from app.suppliers import mirror_store_link
 
 REMINDER_AFTER = timedelta(hours=24)
 # Al decidir se avisa enseguida; si ese aviso falló, la tarea de fondo lo reintenta después de esto.
@@ -101,6 +102,7 @@ async def approve_request(session: AsyncSession, request: StoreRequest, approval
     )
     session.add(store)
     await session.flush()
+    await mirror_store_link(session, store)
     request.status = "approved"
     request.decided_at = datetime.now(UTC)
     request.store_id = store.id

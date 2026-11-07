@@ -53,6 +53,7 @@ from app.models import (
 from app.onboarding import request_page_url
 from app.phones import normalize_phone
 from app.schemas import OrderChange, SaleLine, StockLine
+from app.suppliers import mirror_store_link
 from app.usage_log import logged_task, set_task_info
 
 RATE_LIMIT_MAX = 20
@@ -350,6 +351,7 @@ async def handle_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer()
         store.visit_weekdays = ",".join(str(d) for d in selected)
         store.delivery_days_set_at = datetime.now(UTC)
+        await mirror_store_link(session, store)
     await _remove_buttons(update)
     await _reply(update, texts.days_saved(selected))
 

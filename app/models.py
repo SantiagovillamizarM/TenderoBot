@@ -149,8 +149,11 @@ class Store(Base):
     __tablename__ = "stores"
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
-    distributor_id: Mapped[int] = mapped_column(
-        ForeignKey("distributors.id", ondelete="CASCADE"), nullable=False, index=True
+    # Proveedor principal (el de antes de que una tienda pudiera tener varios). Puede ser None: un
+    # tendero que se registra en Telegram tiene tienda antes de tener proveedores. Los proveedores
+    # de la tienda, con su estado y sus días, están en StoreSupplier.
+    distributor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("distributors.id", ondelete="CASCADE"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -180,12 +183,55 @@ class Store(Base):
     latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
     longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
 
-    distributor: Mapped[Distributor] = relationship(back_populates="stores")
+    distributor: Mapped[Distributor | None] = relationship(back_populates="stores")
+    suppliers: Mapped[list["StoreSupplier"]] = relationship(back_populates="store", cascade="all, delete-orphan")
     sales: Mapped[list["Sale"]] = relationship(back_populates="store")
     stock_counts: Mapped[list["StockCount"]] = relationship(back_populates="store")
     receipts: Mapped[list["Receipt"]] = relationship(back_populates="store")
     suggested_orders: Mapped[list["SuggestedOrder"]] = relationship(back_populates="store")
     pending_actions: Mapped[list["PendingAction"]] = relationship(back_populates="store")
+
+
+SUPPLIER_PENDING = "pending"
+SUPPLIER_APPROVED = "approved"
+SUPPLIER_REJECTED = "rejected"
+
+
+class StoreSupplier(Base):
+    """Un proveedor de una tienda. Una tienda puede tener varios; cada uno con su estado y sus días.
+
+    El tendero pide trabajar con un proveedor (pendiente); el proveedor acepta con sus días de ruta y
+    su anticipación, o rechaza con motivo. Con cada proveedor aceptado el tendero escoge sus días de
+    entrega, y el recordatorio de pedido va por proveedor.
+    """
+
+    __tablename__ = "store_suppliers"
+    __table_args__ = (
+        UniqueConstraint("store_id", "distributor_id", name="uq_store_suppliers_store_distributor"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="ck_store_suppliers_status"),
+        Index("ix_store_suppliers_distributor_status", "distributor_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
+    distributor_id: Mapped[int] = mapped_column(ForeignKey("distributors.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=SUPPLIER_PENDING)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Cuándo se le avisó al tendero que el proveedor aceptó o rechazó (evita avisar dos veces).
+    decision_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Días en que este proveedor pasa por la zona (los pone el proveedor al aceptar).
+    route_weekdays: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Días en que el tendero recibe de este proveedor (los escoge de route_weekdays en el bot).
+    visit_weekdays: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    lead_time_days: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    delivery_days_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Entrega de este proveedor para la que ya se mandó el recordatorio de pedido.
+    last_reminder_for: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    store: Mapped[Store] = relationship(back_populates="suppliers")
+    distributor: Mapped[Distributor] = relationship()
 
 
 class StoreRequest(Base):
