@@ -465,7 +465,7 @@ async def test_login_with_unknown_phone_does_not_register(monkeypatch):
     await handlers.handle_contact(own_phone("+57 311 000 0000"), None)
     # Dijo que ya tenía cuenta: no se le crea nada, se le avisa y se le ofrece registrarse.
     assert started == []
-    assert replies == [texts.ASK_LOGIN, texts.PHONE_VERIFIED, texts.no_account_for_phone("+57 311 000 0000")]
+    assert replies == [texts.ASK_LOGIN, texts.no_account_for_phone("+57 311 000 0000")]
     # Si escoge registrarse, ya no tiene que volver a compartir el número.
     await handlers.handle_start_choice(start_button("start:signup"), None)
     assert started == [(555, "573110000000")]

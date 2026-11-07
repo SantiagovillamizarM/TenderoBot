@@ -470,7 +470,6 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 else:
                     # Dijo que ya tenía cuenta (o no escogió): su número no es de ninguna tienda.
                     _verified_phone[chat_id] = phone
-                    await _reply(update, texts.PHONE_VERIFIED, reply_markup=keyboards.remove_keyboard())
                     await _reply(
                         update, texts.no_account_for_phone(format_phone(phone)), reply_markup=keyboards.register_keyboard()
                     )
