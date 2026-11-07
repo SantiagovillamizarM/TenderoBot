@@ -19,7 +19,7 @@ from sqlalchemy.engine import make_url
 
 ENV_FILE = Path(".env")
 # PostgreSQL local de docker-compose.carga.yml.
-DEFAULT_LOAD_URL = "postgresql+asyncpg://carga:carga@localhost:55432/tenderobot_carga"
+DEFAULT_LOAD_URL = "postgresql+asyncpg://carga:carga@localhost:15432/tenderobot_carga"
 
 
 class LoadDatabaseError(Exception):

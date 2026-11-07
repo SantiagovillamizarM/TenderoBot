@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Product, Receipt, Sale, StockCount, Store, SuggestedOrder, SuggestedOrderItem
+from app.store_catalog import supplier_ids
 
 # Colombia no tiene horario de verano: UTC-5 fijo (evita depender de tzdata en Windows).
 COLOMBIA_TZ = timezone(timedelta(hours=-5))
@@ -384,7 +385,7 @@ async def load_store_analysis(
 ) -> StoreAnalysis | None:
     """Lee de la base todo lo necesario para una tienda y corre el motor.
 
-    Solo productos activos del distribuidor dueño de la tienda (aislamiento multi-tenant).
+    Solo productos activos de los proveedores aceptados de la tienda (aislamiento multi-tenant).
     """
     now = _ensure_aware(now or datetime.now(timezone.utc))
     store = await session.get(Store, store_id)
@@ -394,7 +395,7 @@ async def load_store_analysis(
     product_rows = (
         await session.scalars(
             select(Product)
-            .where(Product.distributor_id == store.distributor_id, Product.active.is_(True))
+            .where(Product.distributor_id.in_(await supplier_ids(session, store)), Product.active.is_(True))
             .order_by(Product.name)
         )
     ).all()

@@ -207,7 +207,7 @@ async def test_route_text_respects_agent_flag(bot, monkeypatch, enabled):
         return []
 
     monkeypatch.setattr(handlers, "require_ready_store", ready)
-    monkeypatch.setattr(handlers, "load_active_products", products)
+    monkeypatch.setattr(handlers, "store_products", products)
     monkeypatch.setattr(handlers, "get_pending", no_pending)
     monkeypatch.setattr(handlers, "answer_with_agent", agent)
     monkeypatch.setattr(handlers, "extract_sales", extract)

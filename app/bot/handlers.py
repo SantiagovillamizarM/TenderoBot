@@ -1,6 +1,6 @@
 import logging
 import math
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -55,6 +55,8 @@ from app.models import (
 
 from app.phones import normalize_phone
 from app.schemas import OrderChange, SaleLine, StockLine
+from app import catalog_merge
+from app.store_catalog import choose, load_items, store_products
 from app.suppliers import approved_suppliers, mirror_store_link, set_supplier_days
 from app.usage_log import logged_task, set_task_info
 
@@ -665,10 +667,21 @@ async def load_active_products(session: AsyncSession, distributor_id: int) -> li
     return list(result.all())
 
 
+def sku_keys(products: list[Product]) -> dict[int, str]:
+    """Código de cada producto en el catálogo de la tienda. Si dos proveedores usan el mismo código
+    para productos distintos, se les agrega "~<proveedor>" para no confundirlos."""
+    counts = Counter(product.sku for product in products)
+    return {
+        product.id: product.sku if counts[product.sku] == 1 else f"{product.sku}~{product.distributor_id}"
+        for product in products
+    }
+
+
 def products_as_catalog(products: list[Product]) -> list[dict]:
+    keys = sku_keys(products)
     return [
         {
-            "sku": product.sku,
+            "sku": keys[product.id],
             "name": product.name,
             "aliases": product.aliases,
             "presentation": product.presentation,
@@ -678,11 +691,13 @@ def products_as_catalog(products: list[Product]) -> list[dict]:
 
 
 def names_by_sku(products: list[Product]) -> dict[str, str]:
-    return {product.sku: product.name for product in products}
+    keys = sku_keys(products)
+    return {keys[product.id]: product.name for product in products}
 
 
 def products_by_sku(products: list[Product]) -> dict[str, Product]:
-    return {product.sku: product for product in products}
+    keys = sku_keys(products)
+    return {keys[product.id]: product for product in products}
 
 
 def parse_stock_correction(text: str) -> tuple[str, int] | None:
@@ -884,7 +899,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if store is None:
             return
         store_id = store.id
-        products = await load_active_products(session, store.distributor_id)
+        products = await store_products(session, store)
         catalog = products_as_catalog(products)
         names = names_by_sku(products)
     image_bytes = await _download_file(context, photo.file_id)
@@ -926,7 +941,7 @@ async def route_text(update: Update, text: str, source: str) -> None:
             return
         store_id = store.id
         set_task_info(store_id=store_id)
-        products = await load_active_products(session, store.distributor_id)
+        products = await store_products(session, store)
         catalog = products_as_catalog(products)
         names = names_by_sku(products)
         correction = parse_stock_correction(text)
@@ -1176,6 +1191,34 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
             shown[KIND_ORDER] = message
         return info
 
+    async def compare(text: str) -> dict:
+        async with session_scope() as session:
+            items = await load_items(session, await session.get(Store, store_id))
+        if not text:
+            rows = catalog_merge.savings(items)
+            return {"comparacion": rows} if rows else {"nota": "Ningún producto lo venden varios de tus proveedores."}
+        item = catalog_merge.find_by_text(items, text)
+        if item is None:
+            return {"no_encontrado": text}
+        return catalog_merge.comparison(item)
+
+    async def prefer(product_text: str, provider_text: str) -> dict:
+        async with session_scope() as session:
+            store = await session.get(Store, store_id)
+            items = await load_items(session, store)
+            item = catalog_merge.find_by_text(items, product_text)
+            if item is None:
+                return {"error": f"No encontré '{product_text}' entre los productos de tus proveedores."}
+            if len(item.offers) < 2:
+                return {"error": f"{item.name} solo lo vende {item.offers[0].distributor_name}."}
+            offer = catalog_merge.find_provider(item, provider_text)
+            if offer is None:
+                return {"error": f"Ese proveedor no vende {item.name}.",
+                        "proveedores": [o.distributor_name for o in item.offers]}
+            await choose(session, store, items, offer.product.id)
+        return {"producto": item.name, "ahora_le_pides_a": offer.distributor_name,
+                "precio_unidad": int(offer.price)}
+
     return StoreActions(
         catalog=agent_catalog(products),
         stock=stock,
@@ -1183,6 +1226,8 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
         draft_sales=draft_sales,
         suggest_order=suggest_order,
         change_order=change_order,
+        compare=compare,
+        prefer=prefer,
     )
 
 
@@ -1233,7 +1278,7 @@ async def handle_confirm_sales(update: Update, context: ContextTypes.DEFAULT_TYP
         if pending is None:
             await _stale_button(update)
             return
-        products = products_by_sku(await load_active_products(session, store.distributor_id))
+        products = products_by_sku(await store_products(session, store))
         source = pending.payload.get("source") or "text"
         if source not in {"voice", "text", "manual"}:
             source = "text"
@@ -1285,7 +1330,7 @@ async def handle_confirm_stock(update: Update, context: ContextTypes.DEFAULT_TYP
         if pending is None:
             await _stale_button(update)
             return
-        products = products_by_sku(await load_active_products(session, store.distributor_id))
+        products = products_by_sku(await store_products(session, store))
         source = pending.payload.get("source") or "photo"
         if source not in {"photo", "manual"}:
             source = "photo"
@@ -1575,8 +1620,9 @@ async def handle_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         store = await require_ready_store(update, session)
         if store is None:
             return
-        products = sorted(await load_active_products(session, store.distributor_id), key=lambda p: p.name)
-    await _reply(update, texts.catalog_list(products))
+        items = await load_items(session, store)
+    for part in texts.store_catalog(items):
+        await _reply(update, part)
 
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

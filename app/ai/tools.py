@@ -52,6 +52,9 @@ class StoreActions:
     draft_sales: Callable[[list[SaleLine]], Awaitable[dict]]
     suggest_order: Callable[[], Awaitable[dict]]
     change_order: Callable[[list[OrderChange]], Awaitable[dict]]
+    # Con varios proveedores (opcionales: la evaluación y la carga no los usan).
+    compare: Callable[[str], Awaitable[dict]] | None = None
+    prefer: Callable[[str, str], Awaitable[dict]] | None = None
 
 
 def _product_view(product: dict) -> dict:
@@ -310,4 +313,44 @@ def build_tools(actions: StoreActions, user_message: str | None = None) -> list[
             },
             ajustar_pedido,
         ),
-    ]
+    ] + _supplier_tools(actions)
+
+
+def _supplier_tools(actions: StoreActions) -> list[Tool]:
+    """Comparar precios entre proveedores y escoger a cuál pedirle cada producto."""
+    tools: list[Tool] = []
+    if actions.compare is not None:
+        compare = actions.compare
+
+        async def comparar_proveedores(args: dict) -> dict:
+            return await compare(_text_arg(args, "producto", required=False))
+
+        tools.append(Tool(
+            "comparar_proveedores",
+            "Compara los precios de un producto entre los proveedores del tendero y dice cuál le está "
+            "pidiendo (el preferido). Sin 'producto', lista los productos que venden varios proveedores "
+            "y cuánto se ahorra con el más barato.",
+            {"type": "object", "properties": {"producto": {"type": "string", "description": "Ej. 'coca litro'"}}},
+            comparar_proveedores,
+        ))
+    if actions.prefer is not None:
+        prefer = actions.prefer
+
+        async def preferir_proveedor(args: dict) -> dict:
+            return await prefer(_text_arg(args, "producto"), _text_arg(args, "proveedor"))
+
+        tools.append(Tool(
+            "preferir_proveedor",
+            "Cambia a qué proveedor se le pide un producto que venden varios. Úsala solo cuando el tendero "
+            "lo pida (ej. 'la coca pídesela a Postobón').",
+            {
+                "type": "object",
+                "properties": {
+                    "producto": {"type": "string", "description": "Como lo dijo el tendero"},
+                    "proveedor": {"type": "string", "description": "Nombre del proveedor, como lo dijo el tendero"},
+                },
+                "required": ["producto", "proveedor"],
+            },
+            preferir_proveedor,
+        ))
+    return tools

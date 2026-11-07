@@ -103,6 +103,8 @@ AGENT_SYSTEM_PROMPT = (
     "- Si pide el pedido o pregunta qué pedir, usa armar_pedido. Si pide cambiarlo (agrega, ponle, quita, "
     "que sean...), usa ajustar_pedido. El bot muestra el pedido con sus botones; no repitas la lista.\n"
     "- Si una herramienta dice que un producto no se reconoció, díselo y menciona los parecidos.\n"
+    "- Si pregunta precios o quién le vende más barato, usa comparar_proveedores. Solo cambia a qué "
+    "proveedor se le pide un producto (preferir_proveedor) si el tendero lo pide.\n"
     "- Si el tendero no dice cuántas unidades vendió (\"vendí coca litro\"), no asumas 1: pregúntale "
     "cuántas antes de registrar. \"Un\", \"una\" o un número sí son cantidades.\n"
     "- Los huevos se venden por cubeta de 30. Si habla de huevos sueltos o por docena (\"10 huevos\", "

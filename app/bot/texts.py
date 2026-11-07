@@ -518,3 +518,52 @@ def supplier_rejected(distributor: str, reason: str) -> str:
 def supplier_days_saved(distributor: str, days: list[int], first_supplier: bool) -> str:
     text = f"Listo. {distributor} te lleva la mercancía los {join_days(days)}."
     return text + "\n\n" + QUICK_START if first_supplier else text
+
+
+# --- /catalogo con varios proveedores ------------------------------------------------------
+
+TELEGRAM_SAFE_LENGTH = 3800  # Telegram corta los mensajes de más de 4096 caracteres
+
+
+def _offer_line(offer, item, several: bool) -> str:
+    marks = []
+    if several and offer is item.preferred:
+        marks.append("⭐")
+    text = f"{offer.distributor_name} {cop(offer.price)}"
+    if offer.sold_out:
+        text += " (agotado)"
+    elif several and offer is item.cheapest and len(item.offers) > 1:
+        text += " (más barato)"
+    return " ".join(marks + [text])
+
+
+def store_catalog(items: list) -> list[str]:
+    """/catalogo: los productos de todos los proveedores, con el precio de cada uno. Partido en mensajes."""
+    if not items:
+        return ["Tus proveedores aún no tienen productos."]
+    providers = {offer.distributor_name for item in items for offer in item.offers}
+    several = len(providers) > 1
+    header = "🛒 Lo que tienen tus proveedores (precio por unidad):" if several else (
+        f"🛒 Lo que tiene {next(iter(providers))} (precio por unidad):")
+    if several:
+        header += "\n⭐ = a quién le pides ese producto. Para cambiarlo, escríbeme: «la coca pídesela a Postobón»."
+    lines = []
+    for item in items:
+        if len(item.offers) == 1:
+            offer = item.offers[0]
+            suffix = f" · {offer.distributor_name}" if several else ""
+            sold_out = " — agotado" if offer.sold_out else ""
+            lines.append(f"• {item.name}: {cop(offer.price)}{sold_out}{suffix}")
+            continue
+        doubt = " (revisa: ¿es el mismo producto?)" if item.doubtful else ""
+        offers = "\n".join(f"   {_offer_line(o, item, True)}" for o in sorted(item.offers, key=lambda o: o.price))
+        lines.append(f"• {item.name}{doubt}\n{offers}")
+    parts, current = [], header
+    for line in lines:
+        if len(current) + len(line) + 1 > TELEGRAM_SAFE_LENGTH:
+            parts.append(current)
+            current = line
+        else:
+            current += "\n" + line
+    parts.append(current)
+    return parts

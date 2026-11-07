@@ -82,7 +82,12 @@ def setup(monkeypatch, session, draft=None, sent_for=False, following=None):
     monkeypatch.setattr(handlers, "get_button_draft", button_draft)
     monkeypatch.setattr(handlers, "order_sent_for", sent)
     monkeypatch.setattr(handlers, "oldest_sent_order", oldest)
+    async def catalog(session_, store_):
+        # Catálogo de la tienda (todos sus proveedores): en estas pruebas, los productos de la sesión.
+        return session.products
+
     monkeypatch.setattr(handlers, "_reply", record)
+    monkeypatch.setattr(handlers, "store_products", catalog)
     return replies
 
 

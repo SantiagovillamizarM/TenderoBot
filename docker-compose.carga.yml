@@ -10,7 +10,9 @@ services:
       POSTGRES_PASSWORD: carga
       POSTGRES_DB: tenderobot_carga
     ports:
-      - "127.0.0.1:55432:5432"
+      # Puerto por debajo de 49152: Windows (Hyper-V/WSL) reserva rangos al azar por encima de ese número
+      # en cada reinicio, y un puerto reservado deja el contenedor sin conexión.
+      - "127.0.0.1:15432:5432"
     volumes:
       - carga-data:/var/lib/postgresql/data
     restart: unless-stopped

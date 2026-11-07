@@ -234,6 +234,21 @@ class StoreSupplier(Base):
     distributor: Mapped[Distributor] = relationship()
 
 
+class StoreProductChoice(Base):
+    """El producto (de un proveedor) que el tendero escogió para un artículo que venden varios.
+
+    Si no escogió, el preferido es el más barato con existencias (app/catalog_merge.py).
+    """
+
+    __tablename__ = "store_product_choices"
+    __table_args__ = (UniqueConstraint("store_id", "product_id", name="uq_store_product_choices_store_product"),)
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class BotRegistration(Base):
     """Registro de una tienda nueva desde Telegram, mientras el tendero responde las preguntas.
 
