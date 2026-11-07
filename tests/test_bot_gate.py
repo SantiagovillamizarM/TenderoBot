@@ -6,7 +6,28 @@ import pytest
 from telegram import Update
 from telegram.ext import ApplicationHandlerStop
 
-from app.bot import handlers, texts
+from app.bot import handlers, registration, texts
+
+
+@pytest.fixture(autouse=True)
+def no_signup_in_progress(monkeypatch):
+    """Por defecto ningún chat está registrando su tienda (las pruebas del registro lo cambian)."""
+
+    async def none(session, chat_id):
+        return None
+
+    monkeypatch.setattr(registration, "get_registration", none)
+
+
+def record_signups(monkeypatch) -> list:
+    """Cambia el inicio del registro por una lista: (chat, número) de cada registro que empieza."""
+    started: list = []
+
+    async def begin(session, chat_id, phone, say):
+        started.append((chat_id, phone))
+
+    monkeypatch.setattr(registration, "begin", begin)
+    return started
 
 
 def message_update(text: str | None = None, voice: bool = False, contact: dict | None = None) -> Update:
@@ -168,6 +189,7 @@ def days_store(**overrides):
     from types import SimpleNamespace
 
     values = dict(
+        distributor_id=1,
         consent_at=datetime.now(UTC),
         delivery_days_set_at=None,
         route_weekdays="0,2,4",
@@ -367,7 +389,7 @@ def own_phone(phone="+57 300 123 4567"):
 
 def phone_store(**overrides):
     values = dict(
-        id=7, name="Tienda Doña Marta", owner_name="Marta", owner_phone="573001234567",
+        id=7, distributor_id=1, name="Tienda Doña Marta", owner_name="Marta", owner_phone="573001234567",
         telegram_chat_id=None, consent_at=None, delivery_days_set_at=datetime(2026, 10, 1, tzinfo=UTC),
         last_activity_at=None, idle_notice_sent_at=None,
     )
@@ -406,10 +428,13 @@ async def test_forwarded_contact_of_someone_else_is_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unregistered_phone_cannot_enter(monkeypatch):
+async def test_unregistered_phone_starts_registration_in_telegram(monkeypatch):
     replies = login_with_phone(monkeypatch, None)
+    started = record_signups(monkeypatch)
     await handlers.handle_contact(own_phone("+57 311 000 0000"), None)
-    assert replies == [texts.phone_not_registered(handlers.request_page_url())]
+    # Ya no lo manda a la página: registra su tienda ahí mismo.
+    assert started == [(555, "573110000000")]
+    assert replies == []
 
 
 @pytest.mark.asyncio

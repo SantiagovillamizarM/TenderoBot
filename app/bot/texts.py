@@ -387,3 +387,67 @@ def catalog_notice(notices: list[str]) -> str:
     if len(notices) == 1:
         return notices[0]
     return "📣 Novedades de tu proveedor:\n\n" + "\n\n".join(notices)
+
+
+# --- Registro de una tienda nueva en Telegram -------------------------------------
+
+REG_WELCOME = (
+    "👋 Tu número no es de ninguna tienda todavía. ¡Registremos la tuya aquí mismo!\n"
+    "Son unas preguntas cortas. Luego escoges con qué proveedores quieres trabajar."
+)
+REG_START = "Perfecto. Empecemos. En cualquier momento puedes escribir /cancelar."
+REG_QUESTIONS = {
+    "store_name": "1/8 · ¿Cómo se llama tu tienda?",
+    "owner_name": "2/8 · ¿Cuál es tu nombre?",
+    "document_id": "3/8 · ¿Cuál es tu cédula o el NIT de la tienda? (solo los números)",
+    "city": "4/8 · ¿En qué ciudad está la tienda?",
+    "neighborhood": "5/8 · ¿En qué barrio?",
+    "address": "6/8 · ¿Cuál es la dirección? Por ejemplo: Cl. 23 #4-50",
+    "receiving_hours": (
+        "7/8 · ¿En qué horario puedes recibir la mercancía?\n"
+        "Por ejemplo: de 7 a 5, o de 8 am a 12 m. Los camiones reparten de 6 a. m. a 8 p. m. y no al almuerzo."
+    ),
+    "payment_method": "8/8 · ¿Cómo prefieres pagarles a tus proveedores?",
+    "location": (
+        "Último paso (opcional): toca 📍 Enviar ubicación para que los proveedores ubiquen tu tienda en el mapa. "
+        "Si prefieres no hacerlo, toca Saltar."
+    ),
+}
+REG_USE_BUTTONS = "Escoge con los botones de arriba 👆"
+REG_LOCATION_HINT = "Toca 📍 Enviar ubicación o Saltar, abajo."
+REG_CONFIRM_HINT = "Revisa los datos y toca ✅ Confirmar o ✏️ Empezar de nuevo."
+REG_CANCELLED = (
+    "Listo, cancelé el registro y no guardé nada.\n"
+    "Si quieres empezar otra vez, toca 📱 Compartir mi número."
+)
+REG_FINISH_FIRST = "Primero terminemos de registrar tu tienda. Si quieres salir, escribe /cancelar."
+REG_PHONE_TAKEN = (
+    "Ese número ya quedó registrado en otra tienda mientras respondías. "
+    "Toca 📱 Compartir mi número para entrar con ella."
+)
+NO_SUPPLIERS = (
+    "🛒 Todavía no trabajas con ningún proveedor en TenderoBot.\n"
+    "Escribe /proveedores para ver los que llegan a tu barrio y escoger con quiénes trabajar."
+)
+NOTHING_TO_CANCEL = "No hay nada que cancelar."
+
+
+def registration_summary(data: dict, payment_label: str, hours_label: str) -> str:
+    location = "marcada en el mapa ✅" if data.get("latitude") is not None else "sin ubicación"
+    return (
+        "Revisa los datos de tu tienda:\n\n"
+        f"🏪 {data.get('store_name')}\n"
+        f"👤 {data.get('owner_name')} · documento {data.get('document_id')}\n"
+        f"📍 {data.get('address')}, {data.get('neighborhood')}, {data.get('city')} ({location})\n"
+        f"🕒 Recibe: {hours_label}\n"
+        f"💵 Pago: {payment_label}\n\n"
+        "¿Está todo bien?"
+    )
+
+
+def registration_done(store_name: str) -> str:
+    return (
+        f"✅ ¡Listo! Tu tienda {store_name} quedó registrada en TenderoBot.\n\n"
+        "Ahora escoge con qué proveedores quieres trabajar: escribe /proveedores. "
+        "Cada uno revisa tu solicitud y te aviso por aquí cuando te acepte."
+    )

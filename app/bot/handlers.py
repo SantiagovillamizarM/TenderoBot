@@ -32,7 +32,7 @@ from app.ai.grok_client import (
 from app.ai.matching import best_product_match, match_order_changes, match_sale_lines, match_stock_lines
 from app.ai.prompts import AGENT_SYSTEM_PROMPT
 from app.ai.tools import StoreActions, build_tools
-from app.bot import keyboards, texts
+from app.bot import keyboards, registration, texts
 from app.config import get_settings
 from app.db import SessionLocal
 from app.inventory.engine import delivery_schedule, load_store_analysis, parse_visit_weekdays
@@ -50,7 +50,7 @@ from app.models import (
     StoreRequest,
     SuggestedOrderItem,
 )
-from app.onboarding import request_page_url
+
 from app.phones import normalize_phone
 from app.schemas import OrderChange, SaleLine, StockLine
 from app.suppliers import mirror_store_link
@@ -140,6 +140,11 @@ async def require_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if store is not None:
             store.last_activity_at = datetime.now(UTC)
             return
+        signup = await registration.get_registration(session, chat_id)
+        if signup is not None and await handle_registration_update(update, session, signup):
+            raise ApplicationHandlerStop
+        if signup is not None:
+            return  # botones del registro, /start o el número compartido: los atienden sus handlers
         in_review = await has_request_in_review(session, chat_id)
     message = update.message
     if message is not None and message.contact is not None:
@@ -154,6 +159,70 @@ async def require_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         await _ask_login(update)
     raise ApplicationHandlerStop
+
+
+def _say(update: Update):
+    async def say(text: str, reply_markup=None) -> None:
+        await _reply(update, text, reply_markup=reply_markup)
+
+    return say
+
+
+async def handle_registration_update(update: Update, session: AsyncSession, signup) -> bool:
+    """Un chat que está registrando su tienda. True si el mensaje ya quedó atendido aquí.
+
+    Pasan a sus handlers (devuelve False): los botones, /start y el número compartido.
+    """
+    message = update.message
+    if update.callback_query is not None or message is None or message.contact is not None:
+        return False
+    say = _say(update)
+    if message.location is not None:
+        await registration.answer_location(signup, message.location.latitude, message.location.longitude, say)
+        return True
+    text = (message.text or "").strip()
+    if not text:
+        await registration.ask(signup, say)
+        return True
+    if text.startswith("/"):
+        command = text.split()[0].split("@")[0].lower()
+        if command == "/start":
+            return False
+        if command == "/cancelar":
+            await registration.cancel(session, signup, say)
+        else:
+            await say(texts.REG_FINISH_FIRST)
+        return True
+    await registration.answer_text(signup, text, say)
+    return True
+
+
+async def handle_registration_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Botones del registro: forma de pago, ✅ Confirmar y ✏️ Empezar de nuevo."""
+    await _answer_callback(update)
+    chat_id = _chat_id(update)
+    query = update.callback_query
+    if chat_id is None or query is None:
+        return
+    say = _say(update)
+    async with session_scope() as session:
+        signup = await registration.get_registration(session, chat_id)
+        if signup is None:
+            await _stale_button(update)
+            return
+        data = query.data or ""
+        if data.startswith("reg:pay:"):
+            await registration.answer_payment(signup, data.rsplit(":", 1)[1], say)
+        elif data == keyboards.REG_RESTART:
+            await registration.restart(signup, say)
+        else:
+            await registration.confirm(session, signup, say)
+    await _remove_buttons(update)
+
+
+async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Durante el registro, /cancelar lo atiende require_link. Aquí solo llega un chat con tienda.
+    await _reply(update, texts.NOTHING_TO_CANCEL)
 
 
 async def has_request_in_review(session: AsyncSession, chat_id: int) -> bool:
@@ -188,6 +257,10 @@ async def require_ready_store(update: Update, session: AsyncSession) -> Store | 
     if store.consent_at is None:
         await _reply(update, texts.NEED_CONSENT, reply_markup=keyboards.consent_keyboard())
         return None
+    if store.distributor_id is None:
+        # Se registró en Telegram y todavía ningún proveedor la aceptó: no hay catálogo ni pedido.
+        await _reply(update, texts.NO_SUPPLIERS)
+        return None
     if store.delivery_days_set_at is None:
         await _reply(update, texts.NEED_DAYS)
         await ask_days(update, store)
@@ -215,12 +288,21 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     async with session_scope() as session:
         store = await get_store_by_chat(session, chat_id)
         if store is None:
+            signup = await registration.get_registration(session, chat_id)
+            if signup is not None:
+                # Está registrando su tienda: retoma la pregunta en la que iba.
+                await _reply(update, texts.INTRO)
+                await registration.ask(signup, _say(update))
+                return
             await _ask_login(update, texts.START_UNLINKED)
             return
         # Siempre se saluda primero y luego se retoma el paso que falte.
         if store.consent_at is None:
             await _reply(update, texts.INTRO)
             await _reply(update, texts.CONSENT_NOTICE, reply_markup=keyboards.consent_keyboard())
+            return
+        if store.distributor_id is None:
+            await _reply(update, texts.INTRO + "\n\n" + texts.NO_SUPPLIERS)
             return
         if store.delivery_days_set_at is None:
             await _reply(update, texts.start_needs_days(store.name))
@@ -254,14 +336,17 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # Pidió acceso en la página: se guarda el chat para avisarle aquí cuando decidan.
                 request.telegram_chat_id = chat_id
                 await _reply(update, texts.REQUEST_IN_REVIEW, reply_markup=keyboards.remove_keyboard())
-            elif request is not None:
-                await _reply(
-                    update,
-                    texts.request_rejected(request.store_name, request.rejection_reason or "", request_page_url()),
-                    reply_markup=keyboards.remove_keyboard(),
-                )
+            elif not phone:
+                await _ask_login(update, texts.phone_not_registered())
             else:
-                await _ask_login(update, texts.phone_not_registered(request_page_url()))
+                if request is not None:
+                    # Su solicitud de la página no fue aprobada: puede registrarse aquí y escoger proveedores.
+                    await _reply(update, texts.request_rejected(request.store_name, request.rejection_reason or ""))
+                signup = await registration.get_registration(session, chat_id)
+                if signup is not None and signup.phone == phone:
+                    await registration.ask(signup, _say(update))
+                else:
+                    await registration.begin(session, chat_id, phone, _say(update))
             return
         if store.telegram_chat_id is not None:
             # El dueño del número verificado manda: la sesión pasa a esta cuenta.
@@ -276,7 +361,9 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             # Esta misma cuenta ya había aceptado para esta tienda: entra directo.
             await _reply(update, texts.welcome_back(store.owner_name, store.name))
-            if store.delivery_days_set_at is None:
+            if store.distributor_id is None:
+                await _reply(update, texts.NO_SUPPLIERS)
+            elif store.delivery_days_set_at is None:
                 await ask_days(update, store)
     if previous_chat_id is not None and context is not None:
         try:
@@ -304,14 +391,21 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     async with session_scope() as session:
         store = await get_store_by_chat(session, chat_id)
         if store is None:
-            await _ask_login(update)
+            signup = await registration.get_registration(session, chat_id)
+            if signup is not None:
+                await registration.accept_consent(signup, _say(update))
+            else:
+                await _ask_login(update)
+            await _remove_buttons(update)
             return
         if store.consent_at is None:
             store.consent_at = datetime.now(UTC)
             if await get_consent(session, store.id, chat_id) is None:
                 session.add(StoreConsent(store_id=store.id, telegram_chat_id=chat_id, accepted_at=store.consent_at))
         await _reply(update, texts.WELCOME.format(owner=store.owner_name))
-        if store.delivery_days_set_at is None:
+        if store.distributor_id is None:
+            await _reply(update, texts.NO_SUPPLIERS)
+        elif store.delivery_days_set_at is None:
             await ask_days(update, store)
     await _remove_buttons(update)
 
@@ -368,7 +462,12 @@ async def handle_reject_consent(update: Update, context: ContextTypes.DEFAULT_TY
     async with session_scope() as session:
         store = await get_store_by_chat(session, chat_id)
         if store is None:
-            await _ask_login(update)
+            signup = await registration.get_registration(session, chat_id)
+            if signup is not None:
+                await registration.reject_consent(session, signup, _say(update))
+            else:
+                await _ask_login(update)
+            await _remove_buttons(update)
             return
         if store.consent_at is not None:
             # Botón viejo de un aviso ya aceptado: no se desvincula por accidente.
@@ -1393,12 +1492,14 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("catalogo", handle_catalog))
     application.add_handler(CommandHandler("ayuda", handle_help))
     application.add_handler(CommandHandler("salir", handle_logout))
+    application.add_handler(CommandHandler("cancelar", handle_cancel))
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
     application.add_handler(CallbackQueryHandler(handle_consent, pattern=f"^{keyboards.ACCEPT_CONSENT}$"))
     application.add_handler(
         CallbackQueryHandler(handle_reject_consent, pattern=f"^{keyboards.REJECT_CONSENT}$")
     )
     application.add_handler(CallbackQueryHandler(handle_days, pattern=keyboards.DAYS_PATTERN))
+    application.add_handler(CallbackQueryHandler(handle_registration_button, pattern=keyboards.REG_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_confirm_logout, pattern=f"^{keyboards.CONFIRM_LOGOUT}$"))
     application.add_handler(CallbackQueryHandler(handle_keep_session, pattern=f"^{keyboards.KEEP_SESSION}$"))
     application.add_handler(CallbackQueryHandler(handle_confirm_sales, pattern=keyboards.draft_pattern(keyboards.CONFIRM_SALES)))

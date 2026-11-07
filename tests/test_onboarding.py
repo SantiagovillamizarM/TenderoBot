@@ -9,6 +9,7 @@ import pytest
 
 from app import onboarding
 from app.bot import handlers, texts
+from tests.test_bot_gate import no_signup_in_progress, record_signups  # noqa: F401
 from app.models import Store, StoreSupplier
 from app.web.store_forms import parse_coordinate, parse_document, parse_store_form, parse_store_request
 
@@ -269,8 +270,11 @@ async def test_sharing_phone_with_request_in_review_saves_the_chat(monkeypatch):
 async def test_sharing_phone_after_rejection_shows_the_reason(monkeypatch):
     request = store_request(status="rejected", rejection_reason="Falta la dirección exacta")
     replies = bot_with_request(monkeypatch, request)
+    started = record_signups(monkeypatch)
     await handlers.handle_contact(contact_update(), None)
     assert len(replies) == 1 and "Motivo: Falta la dirección exacta" in replies[0]
+    # Después del motivo puede registrarse en Telegram y escoger otros proveedores.
+    assert started == [(555, "573001234567")]
 
 
 @pytest.mark.asyncio

@@ -121,3 +121,43 @@ def parse_days_callback(data: str) -> tuple[list[int], str]:
     """'days:04:2' -> ([0, 4], '2')"""
     _prefix, marked, action = data.split(":")
     return sorted({int(d) for d in marked}), action
+
+
+# --- Registro de una tienda nueva -------------------------------------------------
+
+REG_PREFIX = "reg"
+REG_PATTERN = r"^reg:(pay:(contado|credito)|confirm|restart)$"
+REG_CONFIRM = "reg:confirm"
+REG_RESTART = "reg:restart"
+SKIP_LOCATION = "Saltar"
+
+
+def payment_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("💵 De contado", callback_data="reg:pay:contado"),
+                InlineKeyboardButton("📝 A crédito", callback_data="reg:pay:credito"),
+            ]
+        ]
+    )
+
+
+def location_keyboard() -> ReplyKeyboardMarkup:
+    """Botón de Telegram que manda la ubicación del celular, o Saltar (es opcional)."""
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("📍 Enviar ubicación", request_location=True)], [KeyboardButton(SKIP_LOCATION)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def registration_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Confirmar", callback_data=REG_CONFIRM),
+                InlineKeyboardButton("✏️ Empezar de nuevo", callback_data=REG_RESTART),
+            ]
+        ]
+    )

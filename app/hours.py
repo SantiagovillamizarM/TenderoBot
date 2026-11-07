@@ -5,6 +5,8 @@ no pasan de noche ni a la hora del almuerzo. Se puede terminar a las 12 m. o emp
 si el horario pasa por encima del almuerzo (7 a. m. a 5 p. m.) significa "todo ese tiempo, menos el almuerzo".
 """
 
+import re
+
 # Horario de reparto de los camiones (hora Colombia). Cambiar aquí si el distribuidor reparte en otro.
 DELIVERY_OPEN = 6 * 60
 DELIVERY_CLOSE = 20 * 60
@@ -66,6 +68,39 @@ def clean_hours(start_raw: str, end_raw: str) -> str:
     if LUNCH_START <= start < LUNCH_END or LUNCH_START < end <= LUNCH_END:
         raise HoursError(f"De {lunch_label()} es la hora del almuerzo: no hay entregas. Escribe otra hora.")
     return f"{hhmm(start)}-{hhmm(end)}"
+
+
+_TIME_IN_TEXT = re.compile(
+    r"(\d{1,2})(?:\s*[:.h]\s*(\d{2}))?\s*(a\.?\s*m\.?|p\.?\s*m\.?|m\.(?!\w)|de la mañana|de la manana|de la tarde|de la noche)?"
+)
+HOURS_EXAMPLE = "Escríbelo así: de 7 a 5, o de 8 am a 12 m."
+
+
+def _to_minutes(hour: int, minute: int, suffix: str) -> int:
+    """Hora como la dice un tendero -> minutos. Sin a. m./p. m., de 1 a 5 se entiende de la tarde."""
+    suffix = suffix.replace(" ", "").replace(".", "")
+    if suffix in ("pm", "delatarde", "delanoche") and hour < 12:
+        hour += 12
+    elif suffix in ("am", "delamañana", "delamanana") and hour == 12:
+        hour = 0
+    elif suffix == "m":
+        hour = 12  # "12 m." = mediodía
+    elif not suffix and 1 <= hour <= 5:
+        hour += 12  # "de 7 a 5": nadie recibe a las 5 de la mañana
+    if hour > 23 or minute > 59:
+        raise HoursError(HOURS_EXAMPLE)
+    return hour * 60 + minute
+
+
+def parse_hours_text(text: str) -> str:
+    """'de 7 a 5', '8 am a 12 m', '7:30 a 17:00' -> 'HH:MM-HH:MM' (con las mismas reglas de clean_hours)."""
+    found = [m for m in _TIME_IN_TEXT.finditer((text or "").lower()) if m.group(1)]
+    if len(found) != 2:
+        raise HoursError(HOURS_EXAMPLE)
+    start, end = (_to_minutes(int(m.group(1)), int(m.group(2) or 0), m.group(3) or "") for m in found)
+    if end <= start and not found[1].group(3) and end < 12 * 60:
+        end += 12 * 60  # "de 1 a 6": las 6 de la tarde
+    return clean_hours(hhmm(start), hhmm(end))
 
 
 def parse_range(value: str | None) -> tuple[int, int] | None:

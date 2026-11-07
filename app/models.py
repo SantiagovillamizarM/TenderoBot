@@ -234,6 +234,26 @@ class StoreSupplier(Base):
     distributor: Mapped[Distributor] = relationship()
 
 
+class BotRegistration(Base):
+    """Registro de una tienda nueva desde Telegram, mientras el tendero responde las preguntas.
+
+    Se crea cuando comparte un número que no es de ninguna tienda; guarda en qué pregunta va y lo
+    que ha respondido. Al confirmar se crea la tienda (sin proveedores) y esta fila se borra.
+    """
+
+    __tablename__ = "bot_registrations"
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    step: Mapped[str] = mapped_column(String(32), nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class StoreRequest(Base):
     """Solicitud de un tendero desde la página pública. El distribuidor la aprueba o la rechaza.
 
