@@ -430,8 +430,13 @@ REG_QUESTIONS = {
     "neighborhood": "5/8 · ¿En qué barrio?",
     "address": "6/8 · ¿Cuál es la dirección? Por ejemplo: Cl. 23 #4-50",
     "receiving_hours": (
-        "7/8 · ¿En qué horario puedes recibir la mercancía?\n"
-        "Por ejemplo: de 7 a 5, o de 8 am a 12 m. Los camiones reparten de 6 a. m. a 8 p. m. y no al almuerzo."
+        "7/8 · 🚚 ¿A qué horas puede llegar el camión con tu pedido?\n\n"
+        "Escribe desde qué hora y hasta qué hora hay alguien en la tienda para recibirlo. Por ejemplo:\n"
+        "• de 7 a 5\n"
+        "• de 8 am a 12 m\n"
+        "• de 2 a 6 pm\n\n"
+        "Ten en cuenta que los camiones solo reparten entre las 6 a. m. y las 8 p. m., "
+        "y no entregan a la hora del almuerzo (de 12 m. a 1 p. m.)."
     ),
     "payment_method": "8/8 · ¿Cómo prefieres pagarles a tus proveedores?",
     "location": (
