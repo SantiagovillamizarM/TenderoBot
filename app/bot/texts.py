@@ -440,8 +440,9 @@ REG_QUESTIONS = {
     ),
     "payment_method": "8/8 · ¿Cómo prefieres pagarles a tus proveedores?",
     "location": (
-        "Último paso (opcional): toca 📍 Enviar ubicación para que los proveedores ubiquen tu tienda en el mapa. "
-        "Si prefieres no hacerlo, toca Saltar."
+        "Último paso (opcional): toca 📍 Enviar ubicación para que los proveedores ubiquen tu tienda en el mapa.\n\n"
+        "⚠️ Se envía el lugar donde estás ahora. Si no estás en la tienda en este momento, toca Saltar "
+        "para que no quede una ubicación equivocada. Si prefieres no compartirla, también puedes tocar Saltar."
     ),
 }
 REG_USE_BUTTONS = "Escoge con los botones de arriba 👆"
