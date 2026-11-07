@@ -11,6 +11,7 @@ seguimiento de las solicitudes de acceso (app.onboarding).
 
 import asyncio
 import logging
+from collections import Counter
 from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy import select
@@ -19,10 +20,9 @@ from telegram import Bot
 from app.bot import keyboards, texts
 from app.db import SessionLocal
 from app.inventory.engine import COLOMBIA_TZ, DeliverySchedule, delivery_schedule
-from app.models import Distributor, Store, SuggestedOrder
+from app.models import SUPPLIER_APPROVED, Distributor, Store, StoreSupplier, SuggestedOrder
 from app.onboarding import send_request_followups
 from app.bot.supplier_notify import send_supplier_followups
-from app.suppliers import mirror_store_link
 
 REMINDER_HOUR = 9
 CHECK_INTERVAL_SECONDS = 600
@@ -44,28 +44,34 @@ def reminder_due(schedule: DeliverySchedule, now: datetime, last_reminder_for: d
 
 
 async def send_due_reminders(bot: Bot, now: datetime | None = None) -> int:
+    """Un recordatorio por proveedor: cada uno tiene su entrega y su hora límite."""
     now = now or datetime.now(UTC)
     sent = 0
     async with SessionLocal() as session:
-        stores = (
-            await session.scalars(
-                select(Store)
-                .join(Distributor, Distributor.id == Store.distributor_id)
+        rows = (
+            await session.execute(
+                select(StoreSupplier, Store, Distributor.name)
+                .join(Store, Store.id == StoreSupplier.store_id)
+                .join(Distributor, Distributor.id == StoreSupplier.distributor_id)
                 .where(
+                    StoreSupplier.status == SUPPLIER_APPROVED,
+                    StoreSupplier.delivery_days_set_at.is_not(None),
                     Store.telegram_chat_id.is_not(None),
                     Store.consent_at.is_not(None),
-                    Store.delivery_days_set_at.is_not(None),
                     Distributor.status == "active",  # proveedor suspendido: sin recordatorios
                 )
             )
         ).all()
-        for store in stores:
-            schedule = delivery_schedule(store.visit_weekdays, store.lead_time_days, now)
-            if not reminder_due(schedule, now, store.last_reminder_for):
+        per_store = Counter(store.id for _link, store, _name in rows)
+        several = {store_id for store_id, count in per_store.items() if count > 1}  # el aviso dice de quién es
+        for link, store, name in rows:
+            schedule = delivery_schedule(link.visit_weekdays or link.route_weekdays or "", link.lead_time_days, now)
+            if not reminder_due(schedule, now, link.last_reminder_for):
                 continue
             already_ordered = await session.scalar(
                 select(SuggestedOrder.id).where(
                     SuggestedOrder.store_id == store.id,
+                    SuggestedOrder.distributor_id == link.distributor_id,
                     SuggestedOrder.delivery_date == schedule.next_delivery,
                     SuggestedOrder.status.in_(("sent", "received")),
                 )
@@ -74,15 +80,18 @@ async def send_due_reminders(bot: Bot, now: datetime | None = None) -> int:
                 try:
                     await bot.send_message(
                         store.telegram_chat_id,
-                        texts.order_reminder(schedule.next_delivery, schedule.order_deadline),
+                        texts.order_reminder(
+                            schedule.next_delivery, schedule.order_deadline, name if store.id in several else None
+                        ),
                     )
                     sent += 1
                 except Exception:
-                    # Solo el id de la tienda: nunca el chat ni datos del tendero.
+                    # Solo ids: nunca el chat ni datos del tendero.
                     logger.warning("No se pudo mandar el recordatorio a la tienda %s", store.id)
                     continue
-            store.last_reminder_for = schedule.next_delivery
-            await mirror_store_link(session, store)
+            link.last_reminder_for = schedule.next_delivery
+            if store.distributor_id == link.distributor_id:
+                store.last_reminder_for = schedule.next_delivery  # copia del principal (compatibilidad)
         await session.commit()
     return sent
 

@@ -238,6 +238,11 @@ def fake_analysis():
         next_delivery=DELIVERY,
         order_deadline=DEADLINE,
         order_lines=[SimpleNamespace(product_id=10, cases=2, reason="Se acaba en 2 días")],
+        # Un plan por proveedor (aquí uno solo, el principal).
+        plans=[SimpleNamespace(
+            distributor_id=1, next_delivery=DELIVERY, order_deadline=DEADLINE,
+            order_lines=[SimpleNamespace(product_id=10, cases=2, reason="Se acaba en 2 días")],
+        )],
     )
 
 
@@ -249,7 +254,7 @@ def store_data(monkeypatch):
     async def products(session, distributor_id):
         return [COCA, PAN]
 
-    async def not_sent(session, store_id, delivery):
+    async def not_sent(session, store_id, delivery, distributor_id=None):
         return False
 
     monkeypatch.setattr(handlers, "load_store_analysis", analysis)
@@ -291,23 +296,23 @@ async def test_suggest_order_creates_draft_and_shows_it(bot, store_data):
     assert info["borrador"] == "creado"
     assert info["total_pesos"] == 2 * 12 * 4500
     assert info["entrega"] == "jueves 12/11"
-    assert bot.drafts[0].kind == handlers.KIND_ORDER
+    assert bot.drafts[0].kind == handlers.order_kind(1)  # un borrador por proveedor
     assert bot.drafts[0].payload["delivery_date"] == "2026-11-12"
-    message = shown[handlers.KIND_ORDER]
+    message = shown[f"{handlers.KIND_ORDER}#0"]
     assert message.markup.inline_keyboard[0][0].callback_data.endswith(":1")
 
 
 @pytest.mark.asyncio
 async def test_suggest_order_when_already_sent(bot, store_data, monkeypatch):
-    async def sent(session, store_id, delivery):
+    async def sent(session, store_id, delivery, distributor_id=None):
         return True
 
     monkeypatch.setattr(handlers, "order_sent_for", sent)
     shown = {}
     info = await actions(shown).suggest_order()
-    assert info == {"ya_enviado": "2026-11-12"}
+    assert info == {"proveedor": None, "ya_enviado": "2026-11-12"}
     assert bot.drafts == []
-    assert shown[handlers.KIND_ORDER].text == texts.order_already_sent(DELIVERY)
+    assert shown[f"{handlers.KIND_ORDER}#0"].text == texts.order_already_sent(DELIVERY)
 
 
 @pytest.mark.asyncio
@@ -329,11 +334,13 @@ async def test_change_order_updates_open_draft(bot, monkeypatch):
     shown = {}
     changes = [OrderChange(sku="GAS-COCA-1L", product_text="coca", action="add", quantity=1)]
     info = await actions(shown).change_order(changes)
+    # Cada producto va al pedido de su proveedor; aquí hay un solo pedido abierto.
+    assert len(shown) == 1
     assert info["borrador"] == "actualizado"
     assert info["total_pesos"] == 2 * 12 * 4500
     assert bot.drafts[0].payload["lines"] == [{"product_id": 10, "cases": 2, "reason": "Se acaba"}]
     assert bot.drafts[0].payload["delivery_date"] == DELIVERY.isoformat()
-    assert handlers.KIND_ORDER in shown
+    assert f"{handlers.KIND_ORDER}#0" in shown
 
 
 @pytest.mark.asyncio
@@ -346,4 +353,4 @@ async def test_pedido_command_shows_draft_with_buttons(bot, store_data, monkeypa
     text, markup = bot.replies[0]
     assert "Coca-Cola 1 litro" in text
     assert markup is not None
-    assert bot.drafts[0].kind == handlers.KIND_ORDER
+    assert bot.drafts[0].kind == handlers.order_kind(1)  # un borrador por proveedor

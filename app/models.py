@@ -469,6 +469,10 @@ class SuggestedOrder(Base):
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Proveedor al que se le hizo el pedido (una tienda puede tener varios: un pedido por proveedor).
+    distributor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("distributors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     store: Mapped[Store] = relationship(back_populates="suggested_orders")
     items: Mapped[list["SuggestedOrderItem"]] = relationship(

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from time import monotonic
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update
 from telegram.ext import (
@@ -351,7 +351,30 @@ async def require_ready_store(update: Update, session: AsyncSession) -> Store | 
     if await session.scalar(select(Distributor.status).where(Distributor.id == store.distributor_id)) != "active":
         await _reply(update, texts.PROVIDER_SUSPENDED)
         return None
+    link = await supplier_without_days(session, store)
+    if link is not None:
+        # Otro proveedor la aceptó y el tendero no ha escogido sus días de entrega con él.
+        route = parse_visit_weekdays(link.route_weekdays or "") or list(range(7))
+        name = await supplier_name(session, link.distributor_id) or "tu proveedor"
+        await _reply(update, texts.need_supplier_days(name, route),
+                     reply_markup=keyboards.supplier_days_keyboard(link.id, route, []))
+        return None
     return store
+
+
+async def supplier_without_days(session: AsyncSession, store: Store) -> StoreSupplier | None:
+    """Un proveedor aceptado (que no es el principal) con el que el tendero aún no escoge días."""
+    return await session.scalar(
+        select(StoreSupplier)
+        .where(
+            StoreSupplier.store_id == store.id,
+            StoreSupplier.status == SUPPLIER_APPROVED,
+            StoreSupplier.delivery_days_set_at.is_(None),
+            StoreSupplier.distributor_id != store.distributor_id,
+        )
+        .order_by(StoreSupplier.decided_at, StoreSupplier.id)
+        .limit(1)
+    )
 
 
 def route_days(store: Store) -> list[int]:
@@ -724,13 +747,20 @@ def apply_stock_correction(lines: list[dict], sku: str, quantity: int) -> list[d
     return result
 
 
+def _kind_filter(kind: str):
+    """Los pedidos van uno por proveedor ("order:<id>"): "order" a secas es cualquiera de ellos."""
+    if kind == KIND_ORDER:
+        return or_(PendingAction.kind == KIND_ORDER, PendingAction.kind.like(f"{KIND_ORDER}:%"))
+    return PendingAction.kind == kind
+
+
 async def get_pending(session: AsyncSession, store_id: int, kind: str) -> PendingAction | None:
     now = datetime.now(UTC)
     return await session.scalar(
         select(PendingAction)
         .where(
             PendingAction.store_id == store_id,
-            PendingAction.kind == kind,
+            _kind_filter(kind),
             PendingAction.expires_at > now,
         )
         .order_by(PendingAction.id.desc())
@@ -778,7 +808,7 @@ async def get_button_draft(update: Update, session: AsyncSession, store_id: int,
         select(PendingAction).where(
             PendingAction.id == pending_id,
             PendingAction.store_id == store_id,
-            PendingAction.kind == kind,
+            _kind_filter(kind),
             PendingAction.expires_at > datetime.now(UTC),
         )
         .with_for_update()
@@ -790,16 +820,18 @@ async def _stale_button(update: Update) -> None:
     await _reply(update, texts.STALE_BUTTON)
 
 
-async def order_sent_for(session: AsyncSession, store_id: int, delivery: date) -> bool:
-    """¿Ya hay un pedido enviado (o recibido) para esa entrega?"""
-    found = await session.scalar(
-        select(SuggestedOrder.id).where(
-            SuggestedOrder.store_id == store_id,
-            SuggestedOrder.delivery_date == delivery,
-            SuggestedOrder.status.in_(("sent", "received")),
-        )
+async def order_sent_for(
+    session: AsyncSession, store_id: int, delivery: date, distributor_id: int | None = None
+) -> bool:
+    """¿Ya hay un pedido enviado (o recibido) para esa entrega? Con proveedor: a ese proveedor."""
+    query = select(SuggestedOrder.id).where(
+        SuggestedOrder.store_id == store_id,
+        SuggestedOrder.delivery_date == delivery,
+        SuggestedOrder.status.in_(("sent", "received")),
     )
-    return found is not None
+    if distributor_id is not None:
+        query = query.where(SuggestedOrder.distributor_id == distributor_id)
+    return await session.scalar(query) is not None
 
 
 async def _download_file(context: ContextTypes.DEFAULT_TYPE, file_id: str) -> bytes:
@@ -1016,8 +1048,9 @@ async def apply_order_message(
     if not changes:
         return False
     changes = match_order_changes(changes, catalog)
-    message, _info = await change_open_order(store_id, changes, products)
-    await _reply(update, message.text, reply_markup=message.markup)
+    messages, _info = await change_open_order(store_id, changes, products)
+    for message in messages:
+        await _reply(update, message.text, reply_markup=message.markup)
     return True
 
 
@@ -1027,88 +1060,145 @@ class BotMessage:
     markup: object | None = None
 
 
+async def supplier_name(session: AsyncSession, distributor_id: int | None) -> str | None:
+    if distributor_id is None:
+        return None
+    distributor = await session.get(Distributor, distributor_id)
+    return distributor.name if isinstance(distributor, Distributor) else None
+
+
+async def supplier_schedule(session: AsyncSession, store: Store, distributor_id: int | None):
+    """Próxima entrega y hora límite con ese proveedor (sus días de entrega y su anticipación)."""
+    link = None
+    if distributor_id is not None:
+        link = await session.scalar(
+            select(StoreSupplier).where(
+                StoreSupplier.store_id == store.id,
+                StoreSupplier.distributor_id == distributor_id,
+                StoreSupplier.status == SUPPLIER_APPROVED,
+            )
+        )
+    if link is not None:
+        days, lead = link.visit_weekdays or link.route_weekdays or store.visit_weekdays, link.lead_time_days
+    else:
+        days, lead = store.visit_weekdays, store.lead_time_days
+    return delivery_schedule(days, lead, datetime.now(UTC))
+
+
+def order_kind(distributor_id: int | None) -> str:
+    """Un borrador de pedido por proveedor: "order:<proveedor>"."""
+    return f"{KIND_ORDER}:{distributor_id}" if distributor_id is not None else KIND_ORDER
+
+
 async def change_open_order(
     store_id: int, changes: list[OrderChange], products: list[Product]
-) -> tuple[BotMessage, dict]:
-    """Aplica cambios al pedido abierto. Devuelve el mensaje con botones y un resumen para el agente."""
-    by_id = {product.id: product for product in products}
+) -> tuple[list[BotMessage], dict]:
+    """Aplica cambios a los pedidos abiertos: cada producto va al pedido de su proveedor.
+
+    Devuelve los mensajes con botones (uno por pedido cambiado) y un resumen para el agente.
+    """
+    by_sku = products_by_sku(products)
+    groups: dict[int | None, list[OrderChange]] = defaultdict(list)
+    unknown: list[str] = []
+    for change in changes:
+        product = by_sku.get(change.sku or "")
+        if product is None:
+            unknown.append(change.product_text or "producto")
+        else:
+            groups[getattr(product, "distributor_id", None)].append(change)
+    messages: list[BotMessage] = []
+    updated: list[dict] = []
+    closed: list[str] = []
     async with session_scope() as session:
-        pending = await get_pending(session, store_id, KIND_ORDER)
-        if pending is None:
-            return BotMessage(texts.NOTHING_PENDING), {
-                "error": "No hay un pedido abierto. Arma uno primero con armar_pedido."
+        for distributor_id, group in groups.items():
+            name = await supplier_name(session, distributor_id)
+            pending = await get_pending(session, store_id, order_kind(distributor_id))
+            if pending is None:
+                closed.append(name or "tu proveedor")
+                continue
+            payload = dict(pending.payload)
+            supplier_products = {
+                p.id: p for p in products if getattr(p, "distributor_id", None) == distributor_id
+            } or {p.id: p for p in products}
+            result = apply_order_changes(list(payload.get("lines") or []), group, by_sku)
+            capped = cap_to_available(result.lines, supplier_products)
+            new = await replace_pending(
+                session, store_id, pending.kind, {**payload, "distributor_id": distributor_id, "lines": capped.lines},
+                ttl=ORDER_PENDING_TTL,
+            )
+            lines = to_order_lines(capped.lines, supplier_products)
+            total = order_total(lines)
+            messages.append(BotMessage(
+                texts.order_draft(
+                    lines, total, date.fromisoformat(payload["delivery_date"]),
+                    datetime.fromisoformat(payload["order_deadline"]), result.not_found, capped.not_found,
+                    supplier=name,
+                ),
+                keyboards.order_keyboard(new.id),
+            ))
+            updated.append({"proveedor": name, "productos": len(lines), "total_pesos": int(total),
+                            "recortados_por_disponibilidad": capped.not_found})
+    if not updated:
+        if closed:
+            return [BotMessage(texts.NOTHING_PENDING)], {
+                "error": f"No hay un pedido abierto con {', '.join(closed)}. Arma uno primero con armar_pedido."
             }
-        payload = dict(pending.payload)
-        result = apply_order_changes(list(payload.get("lines") or []), changes, products_by_sku(products))
-        capped = cap_to_available(result.lines, by_id)
-        pending = await replace_pending(
-            session, store_id, KIND_ORDER, {**payload, "lines": capped.lines}, ttl=ORDER_PENDING_TTL
-        )
-        pending_id = pending.id
-    lines = to_order_lines(capped.lines, by_id)
-    total = order_total(lines)
-    message = BotMessage(
-        texts.order_draft(
-            lines,
-            total,
-            date.fromisoformat(payload["delivery_date"]),
-            datetime.fromisoformat(payload["order_deadline"]),
-            result.not_found,
-            capped.not_found,
-        ),
-        keyboards.order_keyboard(pending_id),
-    )
-    return message, {
-        "borrador": "actualizado",
-        "productos": len(lines),
-        "total_pesos": int(total),
-        "no_encontrados": result.not_found,
-        "recortados_por_disponibilidad": capped.not_found,
-        "nota": "El tendero lo envía con el botón del pedido.",
-    }
+        return [], {"error": "No reconocí los productos del cambio.", "no_encontrados": unknown}
+    info = {"borrador": "actualizado", "pedidos": updated, "no_encontrados": unknown,
+            "sin_pedido_abierto": closed, "nota": "El tendero lo envía con el botón de cada pedido."}
+    if len(updated) == 1:
+        info.update(updated[0])
+    return messages, info
 
 
-async def prepare_order(session: AsyncSession, store) -> tuple[BotMessage, dict] | None:
-    """Pedido sugerido para la próxima entrega, guardado como borrador. None si no hay tienda."""
+async def prepare_orders(session: AsyncSession, store) -> list[tuple[BotMessage, dict]] | None:
+    """Un pedido sugerido por proveedor para su próxima entrega, cada uno como borrador. None si no hay tienda."""
     analysis = await load_store_analysis(session, store.id)
     if analysis is None:
         return None
-    if await order_sent_for(session, store.id, analysis.next_delivery):
-        return BotMessage(texts.order_already_sent(analysis.next_delivery)), {
-            "ya_enviado": analysis.next_delivery.isoformat()
-        }
-    by_id = {p.id: p for p in await load_active_products(session, store.distributor_id)}
-    capped = cap_to_available(
-        [{"product_id": line.product_id, "cases": line.cases, "reason": line.reason} for line in analysis.order_lines],
-        by_id,
-    )
-    pending = await replace_pending(
-        session,
-        store.id,
-        KIND_ORDER,
-        {
-            "lines": capped.lines,
-            "delivery_date": analysis.next_delivery.isoformat(),
-            "order_deadline": analysis.order_deadline.isoformat(),
-        },
-        ttl=ORDER_PENDING_TTL,
-    )
-    lines = to_order_lines(capped.lines, by_id)
-    total = order_total(lines)
-    message = BotMessage(
-        texts.order_draft(
-            lines, total, analysis.next_delivery, analysis.order_deadline, availability_notes=capped.not_found
-        ),
-        keyboards.order_keyboard(pending.id),
-    )
-    return message, {
-        "borrador": "creado",
-        "entrega": texts.day_label(analysis.next_delivery),
-        "hora_limite": texts.deadline_label(analysis.order_deadline),
-        "productos": len(lines),
-        "total_pesos": int(total),
-        "nota": "El tendero lo revisa y lo envía con el botón del pedido.",
-    }
+    results = []
+    for plan in analysis.plans:
+        distributor_id = plan.distributor_id
+        name = await supplier_name(session, distributor_id)
+        if await order_sent_for(session, store.id, plan.next_delivery, distributor_id):
+            results.append((BotMessage(texts.order_already_sent(plan.next_delivery, name)),
+                            {"proveedor": name, "ya_enviado": plan.next_delivery.isoformat()}))
+            continue
+        target = distributor_id if distributor_id is not None else store.distributor_id
+        by_id = {p.id: p for p in await load_active_products(session, target)}
+        capped = cap_to_available(
+            [{"product_id": line.product_id, "cases": line.cases, "reason": line.reason} for line in plan.order_lines],
+            by_id,
+        )
+        pending = await replace_pending(
+            session,
+            store.id,
+            order_kind(distributor_id),
+            {
+                "distributor_id": distributor_id,
+                "lines": capped.lines,
+                "delivery_date": plan.next_delivery.isoformat(),
+                "order_deadline": plan.order_deadline.isoformat(),
+            },
+            ttl=ORDER_PENDING_TTL,
+        )
+        lines = to_order_lines(capped.lines, by_id)
+        total = order_total(lines)
+        message = BotMessage(
+            texts.order_draft(lines, total, plan.next_delivery, plan.order_deadline,
+                              availability_notes=capped.not_found, supplier=name),
+            keyboards.order_keyboard(pending.id),
+        )
+        results.append((message, {
+            "proveedor": name,
+            "borrador": "creado",
+            "entrega": texts.day_label(plan.next_delivery),
+            "hora_limite": texts.deadline_label(plan.order_deadline),
+            "productos": len(lines),
+            "total_pesos": int(total),
+            "nota": "El tendero lo revisa y lo envía con el botón del pedido.",
+        }))
+    return results
 
 
 def agent_catalog(products: list[Product]) -> list[dict]:
@@ -1176,19 +1266,21 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
     async def suggest_order() -> dict:
         async with session_scope() as session:
             store = await session.get(Store, store_id)
-            prepared = await prepare_order(session, store) if store is not None else None
-        if prepared is None:
+            prepared = await prepare_orders(session, store) if store is not None else None
+        if not prepared:
             return {"error": "No se pudo armar el pedido"}
-        message, info = prepared
-        shown[KIND_ORDER] = message
-        return info
+        for index, (message, _info) in enumerate(prepared):
+            shown[f"{KIND_ORDER}#{index}"] = message
+        infos = [info for _message, info in prepared]
+        return infos[0] if len(infos) == 1 else {"pedidos": infos, "nota": "Un pedido por proveedor."}
 
     async def change_order(changes: list[OrderChange]) -> dict:
         if not changes:
             return {"borrador": "sin_cambios"}
-        message, info = await change_open_order(store_id, changes, products)
+        messages, info = await change_open_order(store_id, changes, products)
         if "error" not in info:
-            shown[KIND_ORDER] = message
+            for index, message in enumerate(messages):
+                shown[f"{KIND_ORDER}#{index}"] = message
         return info
 
     async def compare(text: str) -> dict:
@@ -1235,7 +1327,7 @@ def agent_outcome(result: AgentResult | None, shown: dict[str, BotMessage]) -> s
     """Qué terminó haciendo el agente, para la bitácora de consumo."""
     if KIND_SALES in shown:
         return "ventas"
-    if KIND_ORDER in shown:
+    if any(key.startswith(KIND_ORDER) for key in shown):
         return "pedido"
     if result is None:
         return "error"
@@ -1406,12 +1498,12 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         store = await require_ready_store(update, session)
         if store is None:
             return
-        prepared = await prepare_order(session, store)
+        prepared = await prepare_orders(session, store)
     if prepared is None:
         await _ask_login(update)
         return
-    message, _info = prepared
-    await _reply(update, message.text, reply_markup=message.markup)
+    for message, _info in prepared:
+        await _reply(update, message.text, reply_markup=message.markup)
 
 
 async def handle_send_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1424,13 +1516,15 @@ async def handle_send_order(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if pending is None:
             await _stale_button(update)
             return
-        # Si pasó la hora límite mientras lo revisaba, el pedido va para la entrega siguiente.
-        schedule = delivery_schedule(store.visit_weekdays, store.lead_time_days, datetime.now(UTC))
-        if await order_sent_for(session, store.id, schedule.next_delivery):
-            # Un solo pedido por entrega (p. ej. dos borradores abiertos o doble toque).
+        distributor_id = pending.payload.get("distributor_id") or store.distributor_id
+        name = await supplier_name(session, distributor_id)
+        # Si pasó la hora límite mientras lo revisaba, el pedido va para la entrega siguiente de ese proveedor.
+        schedule = await supplier_schedule(session, store, distributor_id)
+        if await order_sent_for(session, store.id, schedule.next_delivery, distributor_id):
+            # Un solo pedido por entrega y proveedor (p. ej. dos borradores abiertos o doble toque).
             await session.delete(pending)
             await _remove_buttons(update)
-            await _reply(update, texts.order_already_sent(schedule.next_delivery))
+            await _reply(update, texts.order_already_sent(schedule.next_delivery, name))
             return
         draft_lines = list(pending.payload.get("lines") or [])
         product_ids = [int(line.get("product_id") or 0) for line in draft_lines]
@@ -1440,7 +1534,7 @@ async def handle_send_order(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 select(Product)
                 .where(
                     Product.id.in_(product_ids),
-                    Product.distributor_id == store.distributor_id,
+                    Product.distributor_id == distributor_id,
                     Product.active.is_(True),
                 )
                 .with_for_update()
@@ -1456,7 +1550,8 @@ async def handle_send_order(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await _reply(update, texts.NO_ORDER)
             return
         missed_deadline = drafted_for is not None and drafted_for != schedule.next_delivery.isoformat()
-        order = SuggestedOrder(store_id=store.id, status="sent", delivery_date=schedule.next_delivery)
+        order = SuggestedOrder(store_id=store.id, distributor_id=distributor_id, status="sent",
+                               delivery_date=schedule.next_delivery)
         for line in lines:
             order.items.append(
                 SuggestedOrderItem(
@@ -1471,7 +1566,7 @@ async def handle_send_order(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 product.available_units -= line.units
         session.add(order)
     await _remove_buttons(update)
-    await _reply(update, texts.order_sent(schedule.next_delivery, missed_deadline, capped.not_found))
+    await _reply(update, texts.order_sent(schedule.next_delivery, missed_deadline, capped.not_found, supplier=name))
 
 
 async def handle_cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1524,15 +1619,18 @@ async def handle_received(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             for item, product in rows
         ]
         delivery = order.delivery_date
+        supplier = await supplier_name(session, getattr(order, "distributor_id", None))
         pending = await replace_pending(
             session,
             store.id,
             KIND_RECEIPT,
-            {"order_id": order.id, "delivery_date": delivery.isoformat() if delivery else None, "lines": lines},
+            {"order_id": order.id, "delivery_date": delivery.isoformat() if delivery else None, "lines": lines,
+             "supplier": supplier},
         )
         pending_id = pending.id
     await _reply(
-        update, texts.receipt_summary(lines, delivery), reply_markup=keyboards.confirm_receipt_keyboard(pending_id)
+        update, texts.receipt_summary(lines, delivery, supplier),
+        reply_markup=keyboards.confirm_receipt_keyboard(pending_id),
     )
 
 
@@ -1547,23 +1645,20 @@ async def apply_receipt_correction(
     delivery = draft.payload.get("delivery_date")
     lines = [dict(line) for line in draft.payload.get("lines") or []]
     ids = [int(line["product_id"]) for line in lines]
-    order_products = (
-        await session.scalars(
-            select(Product).where(Product.id.in_(ids), Product.distributor_id == store.distributor_id)
-        )
-    ).all()
-    match = best_product_match(name, products_as_catalog(list(order_products)))
+    # Los productos de ESTE pedido (de cualquiera de los proveedores de la tienda).
+    order_products = list((await session.scalars(select(Product).where(Product.id.in_(ids)))).all())
+    match = best_product_match(name, products_as_catalog(order_products))
     if match is None:
         await _reply(update, texts.RECEIPT_NOT_IN_ORDER)
         return
-    product_id = next(p.id for p in order_products if p.sku == match["sku"])
+    product_id = products_by_sku(order_products)[match["sku"]].id
     for line in lines:
         if int(line["product_id"]) == product_id:
             line["units"] = quantity
     pending = await replace_pending(session, store.id, KIND_RECEIPT, {**draft.payload, "lines": lines})
     await _reply(
         update,
-        texts.receipt_summary(lines, date.fromisoformat(delivery) if delivery else None),
+        texts.receipt_summary(lines, date.fromisoformat(delivery) if delivery else None, draft.payload.get("supplier")),
         reply_markup=keyboards.confirm_receipt_keyboard(pending.id),
     )
 

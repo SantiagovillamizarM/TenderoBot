@@ -15,8 +15,17 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Product, Receipt, Sale, StockCount, Store, SuggestedOrder, SuggestedOrderItem
-from app.store_catalog import supplier_ids
+from app.models import (
+    SUPPLIER_APPROVED,
+    Receipt,
+    Sale,
+    StockCount,
+    Store,
+    StoreSupplier,
+    SuggestedOrder,
+    SuggestedOrderItem,
+)
+from app.store_catalog import load_items
 
 # Colombia no tiene horario de verano: UTC-5 fijo (evita depender de tzdata en Windows).
 COLOMBIA_TZ = timezone(timedelta(hours=-5))
@@ -42,6 +51,8 @@ class ProductInput:
     name: str
     units_per_case: int
     unit_price: Decimal
+    # Proveedor al que se le pide este producto (con varios proveedores, cada uno tiene su plan).
+    distributor_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -112,7 +123,26 @@ class DeliverySchedule:
 
 
 @dataclass
+class SupplierPlan:
+    """El pedido para un proveedor: con su próxima entrega, su hora límite y lo que hay que pedirle."""
+
+    distributor_id: int | None
+    next_delivery: date
+    order_deadline: datetime
+    following_delivery: date
+    horizon_days: int
+    order_lines: list[OrderLine] = field(default_factory=list)
+
+    @property
+    def order_total(self) -> Decimal:
+        return sum((line.subtotal for line in self.order_lines), Decimal("0"))
+
+
+@dataclass
 class StoreAnalysis:
+    """Análisis de una tienda. next_delivery, order_deadline, horizon_days y order_lines son los del
+    proveedor principal (compatibilidad); `plans` trae el pedido de cada proveedor."""
+
     store_id: int
     as_of: datetime
     horizon_days: int
@@ -120,6 +150,10 @@ class StoreAnalysis:
     order_deadline: datetime
     products: list[ProductAnalysis] = field(default_factory=list)
     order_lines: list[OrderLine] = field(default_factory=list)
+    plans: list[SupplierPlan] = field(default_factory=list)
+
+    def plan_for(self, distributor_id: int | None) -> SupplierPlan | None:
+        return next((plan for plan in self.plans if plan.distributor_id == distributor_id), None)
 
     @property
     def order_total(self) -> Decimal:
@@ -316,13 +350,23 @@ def analyze_store(
     receipts: list[ReceiptEvent],
     now: datetime,
     in_transit: dict[int, int] | None = None,
+    schedules: dict[int, tuple[str, int]] | None = None,
+    primary_distributor_id: int | None = None,
 ) -> StoreAnalysis:
+    """Sin `schedules`, un solo plan con visit_weekdays y lead_time_days (como siempre).
+
+    Con `schedules` ({proveedor: (días de entrega, anticipación)}), cada producto se analiza con el
+    horizonte de su proveedor y sale un plan de pedido por proveedor.
+    """
     now = _ensure_aware(now)
     in_transit = in_transit or {}
     today = local_date(now)
-    # Lo que se pide hoy llega en la próxima entrega y debe durar hasta la siguiente.
-    schedule = delivery_schedule(visit_weekdays, lead_time_days, now)
-    horizon = (schedule.following_delivery - today).days
+
+    def plan_schedule(distributor_id: int | None) -> tuple[DeliverySchedule, int]:
+        # Lo que se pide hoy llega en la próxima entrega y debe durar hasta la siguiente.
+        days, lead = (schedules or {}).get(distributor_id, (visit_weekdays, lead_time_days))
+        schedule = delivery_schedule(days, lead, now)
+        return schedule, (schedule.following_delivery - today).days
 
     sales_by_product: dict[int, list[SaleEvent]] = defaultdict(list)
     counts_by_product: dict[int, list[CountEvent]] = defaultdict(list)
@@ -337,46 +381,62 @@ def analyze_store(
         if _ensure_aware(r.received_at) <= now:
             receipts_by_product[r.product_id].append(r)
 
-    analyses = [
-        analyze_product(
-            p,
-            sales_by_product[p.product_id],
-            counts_by_product[p.product_id],
-            receipts_by_product[p.product_id],
-            today,
-            horizon,
-            in_transit.get(p.product_id, 0),
-        )
-        for p in products
-    ]
+    by_supplier: dict[int | None, list[ProductInput]] = defaultdict(list)
+    for p in products:
+        by_supplier[p.distributor_id if schedules else None].append(p)
+    if not by_supplier:
+        by_supplier[primary_distributor_id if schedules else None] = []
+
+    analyses: list[ProductAnalysis] = []
+    plans: list[SupplierPlan] = []
+    for distributor_id, group in by_supplier.items():
+        schedule, horizon = plan_schedule(distributor_id)
+        group_analyses = [
+            analyze_product(
+                p,
+                sales_by_product[p.product_id],
+                counts_by_product[p.product_id],
+                receipts_by_product[p.product_id],
+                today,
+                horizon,
+                in_transit.get(p.product_id, 0),
+            )
+            for p in group
+        ]
+        analyses.extend(group_analyses)
+        lines = [
+            OrderLine(
+                product_id=a.product_id,
+                sku=a.sku,
+                name=a.name,
+                cases=a.cases,
+                units=a.units,
+                subtotal=Decimal(a.units) * a.unit_price,
+                reason=a.reason,
+            )
+            for a in group_analyses
+            if a.cases > 0
+        ]
+        lines.sort(key=lambda line: (-line.subtotal, line.name))
+        plans.append(SupplierPlan(distributor_id, schedule.next_delivery, schedule.order_deadline,
+                                  schedule.following_delivery, horizon, lines))
 
     abc = classify_abc({a.product_id: a.sold_value_28d for a in analyses})
     for a in analyses:
         a.abc_class = abc[a.product_id]
-
-    order_lines = [
-        OrderLine(
-            product_id=a.product_id,
-            sku=a.sku,
-            name=a.name,
-            cases=a.cases,
-            units=a.units,
-            subtotal=Decimal(a.units) * a.unit_price,
-            reason=a.reason,
-        )
-        for a in analyses
-        if a.cases > 0
-    ]
-    order_lines.sort(key=lambda line: (-line.subtotal, line.name))
+    analyses.sort(key=lambda a: a.name)
+    plans.sort(key=lambda plan: (plan.distributor_id != primary_distributor_id, plan.next_delivery))
+    main = plans[0]
 
     return StoreAnalysis(
         store_id=store_id,
         as_of=now,
-        horizon_days=horizon,
-        next_delivery=schedule.next_delivery,
-        order_deadline=schedule.order_deadline,
+        horizon_days=main.horizon_days,
+        next_delivery=main.next_delivery,
+        order_deadline=main.order_deadline,
         products=analyses,
-        order_lines=order_lines,
+        order_lines=main.order_lines,
+        plans=plans,
     )
 
 
@@ -392,16 +452,27 @@ async def load_store_analysis(
     if store is None:
         return None
 
-    product_rows = (
-        await session.scalars(
-            select(Product)
-            .where(Product.distributor_id.in_(await supplier_ids(session, store)), Product.active.is_(True))
-            .order_by(Product.name)
-        )
-    ).all()
-    products = [
-        ProductInput(p.id, p.sku, p.name, p.units_per_case, Decimal(p.unit_price)) for p in product_rows
-    ]
+    # Un artículo que venden varios proveedores es un solo producto en la tienda: un solo stock. Se
+    # analiza con el producto de su proveedor preferido, y ventas, conteos, recibos y pedidos de los
+    # otros proveedores se cuentan en ese mismo artículo.
+    items = await load_items(session, store)
+    canonical = {offer.product.id: item.preferred.product.id for item in items for offer in item.offers}
+    products = sorted(
+        (
+            ProductInput(p.id, p.sku, p.name, p.units_per_case, Decimal(p.unit_price), p.distributor_id)
+            for p in (item.preferred.product for item in items)
+        ),
+        key=lambda p: p.name,
+    )
+    links = await session.scalars(
+        select(StoreSupplier).where(StoreSupplier.store_id == store.id, StoreSupplier.status == SUPPLIER_APPROVED)
+    )
+    schedules = {
+        link.distributor_id: (link.visit_weekdays or link.route_weekdays or store.visit_weekdays, link.lead_time_days)
+        for link in links.all()
+    }
+    if store.distributor_id is not None:
+        schedules.setdefault(store.distributor_id, (store.visit_weekdays, store.lead_time_days))
 
     count_rows = (
         await session.scalars(
@@ -412,8 +483,9 @@ async def load_store_analysis(
     ).all()
     latest_counts: dict[int, StockCount] = {}
     for c in count_rows:
-        latest_counts.setdefault(c.product_id, c)
-    counts = [CountEvent(c.product_id, c.quantity, c.counted_at) for c in latest_counts.values()]
+        if c.product_id in canonical:
+            latest_counts.setdefault(canonical[c.product_id], c)
+    counts = [CountEvent(product_id, c.quantity, c.counted_at) for product_id, c in latest_counts.items()]
 
     # Ventas necesarias: las de la ventana de 28 días, las posteriores al conteo más
     # antiguo vigente y la última venta (para detectar estancados).
@@ -428,7 +500,11 @@ async def load_store_analysis(
             select(Sale).where(Sale.store_id == store_id, Sale.sold_at > sales_since, Sale.sold_at <= now)
         )
     ).all()
-    sales = [SaleEvent(s.product_id, s.quantity, Decimal(s.unit_price), s.sold_at) for s in sale_rows]
+    sales = [
+        SaleEvent(canonical[s.product_id], s.quantity, Decimal(s.unit_price), s.sold_at)
+        for s in sale_rows
+        if s.product_id in canonical
+    ]
 
     receipt_rows = (
         await session.scalars(
@@ -437,7 +513,11 @@ async def load_store_analysis(
             )
         )
     ).all()
-    receipts = [ReceiptEvent(r.product_id, r.quantity, r.received_at) for r in receipt_rows]
+    receipts = [
+        ReceiptEvent(canonical[r.product_id], r.quantity, r.received_at)
+        for r in receipt_rows
+        if r.product_id in canonical
+    ]
 
     # Pedidos enviados que todavía no llegan: lo que traen no se vuelve a pedir.
     transit_since = local_date(now) - timedelta(days=IN_TRANSIT_GRACE_DAYS)
@@ -453,7 +533,10 @@ async def load_store_analysis(
             .group_by(SuggestedOrderItem.product_id)
         )
     ).all()
-    in_transit = {product_id: int(units or 0) for product_id, units in transit_rows}
+    in_transit: dict[int, int] = defaultdict(int)
+    for product_id, units in transit_rows:
+        if product_id in canonical:
+            in_transit[canonical[product_id]] += int(units or 0)
 
     return analyze_store(
         store_id=store.id,
@@ -464,5 +547,7 @@ async def load_store_analysis(
         counts=counts,
         receipts=receipts,
         now=now,
-        in_transit=in_transit,
+        in_transit=dict(in_transit),
+        schedules=schedules,
+        primary_distributor_id=store.distributor_id,
     )

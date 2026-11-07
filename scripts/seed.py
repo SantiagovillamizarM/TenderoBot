@@ -186,7 +186,7 @@ def build_history(store: Store, scale: float, products: list[Product], today: da
                 )
 
         if day.weekday() in delivery_weekdays and day > start:
-            order = SuggestedOrder(store_id=store.id, status="received", delivery_date=day,
+            order = SuggestedOrder(store_id=store.id, distributor_id=store.distributor_id, status="received", delivery_date=day,
                                    created_at=_at(day - timedelta(days=store.lead_time_days), 15))
             received_at = _at(day, 7)
             for product in products:

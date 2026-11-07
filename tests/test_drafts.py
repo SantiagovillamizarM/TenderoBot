@@ -68,8 +68,15 @@ def setup(monkeypatch, session, draft=None, sent_for=False, following=None):
             return draft
         return None
 
-    async def sent(session, store_id, delivery):
+    async def sent(session, store_id, delivery, distributor_id=None):
         return sent_for
+
+    async def schedule(session, store_, distributor_id):
+        from datetime import UTC, datetime
+
+        from app.inventory.engine import delivery_schedule
+
+        return delivery_schedule(store_.visit_weekdays, store_.lead_time_days, datetime.now(UTC))
 
     async def oldest(session, store_id, exclude_id=None):
         return following
@@ -81,6 +88,7 @@ def setup(monkeypatch, session, draft=None, sent_for=False, following=None):
     monkeypatch.setattr(handlers, "require_ready_store", ready)
     monkeypatch.setattr(handlers, "get_button_draft", button_draft)
     monkeypatch.setattr(handlers, "order_sent_for", sent)
+    monkeypatch.setattr(handlers, "supplier_schedule", schedule)
     monkeypatch.setattr(handlers, "oldest_sent_order", oldest)
     async def catalog(session_, store_):
         # Catálogo de la tienda (todos sus proveedores): en estas pruebas, los productos de la sesión.
@@ -159,7 +167,8 @@ async def test_pedido_after_sending_does_not_suggest_again(monkeypatch):
     replies = setup(monkeypatch, session, sent_for=True)
 
     async def analysis(session, store_id):
-        return SimpleNamespace(next_delivery=delivery)
+        plan = SimpleNamespace(distributor_id=None, next_delivery=delivery, order_lines=[])
+        return SimpleNamespace(next_delivery=delivery, plans=[plan])
 
     monkeypatch.setattr(handlers, "load_store_analysis", analysis)
     await handlers.handle_order(button("x"), None)

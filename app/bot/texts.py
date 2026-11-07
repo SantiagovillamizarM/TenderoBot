@@ -240,16 +240,19 @@ def order_draft(
     deadline,
     not_found: list[str] | None = None,
     availability_notes: list[str] | None = None,
+    supplier: str | None = None,
 ) -> str:
     rows = []
+    to = f" a {supplier}" if supplier else ""
     if lines:
-        rows.append(f"📦 Pedido para el {day_label(delivery)}:")
+        rows.append(f"📦 Pedido{to} para el {day_label(delivery)}:")
         for line in lines:
             word = "caja" if line.cases == 1 else "cajas"
             rows.append(f"• {line.cases} {word} {line.name} — {line.reason}")
         rows.append(f"Total: {cop(total)} COP")
     else:
-        rows.append(f"📦 Por ahora no necesitas pedir nada para el {day_label(delivery)}.")
+        verb = f"pedirle nada{to}" if supplier else "pedir nada"
+        rows.append(f"📦 Por ahora no necesitas {verb} para el {day_label(delivery)}.")
     if not_found:
         rows.append("")
         rows.append("No encontré en el catálogo: " + ", ".join(not_found) + ".")
@@ -263,29 +266,34 @@ def order_draft(
     return "\n".join(rows)
 
 
-def order_sent(delivery, missed_deadline: bool, availability_notes: list[str] | None = None) -> str:
+def order_sent(
+    delivery, missed_deadline: bool, availability_notes: list[str] | None = None, supplier: str | None = None
+) -> str:
+    to = supplier or "al distribuidor"
     if missed_deadline:
         text = (
             "Ya había pasado la hora límite de esa entrega. "
-            f"Envié el pedido para la siguiente: te llega el {day_label(delivery)}."
+            f"Envié el pedido{' a ' + supplier if supplier else ''} para la siguiente: te llega el {day_label(delivery)}."
         )
     else:
-        text = f"✅ Pedido enviado al distribuidor. Te llega el {day_label(delivery)}."
+        text = f"✅ Pedido enviado {'a ' + to if supplier else to}. Te llega el {day_label(delivery)}."
     if availability_notes:
         text += "\n\nAjusté según lo que tiene tu proveedor: " + ", ".join(availability_notes) + "."
     return text
 
 
-def order_already_sent(delivery) -> str:
+def order_already_sent(delivery, supplier: str | None = None) -> str:
+    to = f" a {supplier}" if supplier else ""
     return (
-        f"Ya enviaste el pedido para el {day_label(delivery)}.\n"
+        f"Ya enviaste el pedido{to} para el {day_label(delivery)}.\n"
         "Cuando te llegue, escribe /recibido. Después te ayudo con el siguiente."
     )
 
 
-def receipt_summary(lines: list[dict], delivery) -> str:
+def receipt_summary(lines: list[dict], delivery, supplier: str | None = None) -> str:
     """Lo que trae el pedido, para que el tendero confirme lo que de verdad llegó."""
-    header = f"📦 Pedido del {day_label(delivery)}." if delivery else "📦 Tu pedido."
+    of = f" de {supplier}" if supplier else ""
+    header = f"📦 Pedido{of} del {day_label(delivery)}." if delivery else f"📦 Tu pedido{of}."
     rows = [header + " ¿Llegó así?"]
     for line in lines:
         units, ordered = int(line["units"]), int(line["ordered"])
@@ -375,9 +383,10 @@ def idle_notice(store_name: str) -> str:
     )
 
 
-def order_reminder(delivery, deadline) -> str:
+def order_reminder(delivery, deadline, supplier: str | None = None) -> str:
+    whose = f" de {supplier}" if supplier else ""
     return (
-        f"⏰ El {day_label(delivery)} te llega mercancía.\n"
+        f"⏰ El {day_label(delivery)} te llega mercancía{whose}.\n"
         f"Tienes hasta el {deadline_label(deadline)} para enviar tu pedido.\n\n"
         "Escribe /pedido y te digo qué pedir."
     )
@@ -567,3 +576,10 @@ def store_catalog(items: list) -> list[str]:
             current += "\n" + line
     parts.append(current)
     return parts
+
+
+def need_supplier_days(distributor: str, route_days: list[int]) -> str:
+    return (
+        f"Antes de seguir, escoge qué días quieres recibir la mercancía de {distributor}. "
+        f"Su camión pasa por tu zona los {join_days(route_days)}."
+    )
