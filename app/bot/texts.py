@@ -516,6 +516,18 @@ NO_SUPPLIERS = (
     "🛒 Todavía no trabajas con ningún proveedor en TenderoBot.\n"
     "Escribe /proveedores para ver los que llegan a tu barrio y escoger con quiénes trabajar."
 )
+
+
+def suppliers_in_review(names: list[str]) -> str:
+    """Sin proveedor aceptado, pero con solicitudes enviadas: no hay que mandarlo a /proveedores otra vez."""
+    who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " y " + names[-1]
+    plural = "tus solicitudes están" if len(names) > 1 else "tu solicitud está"
+    return (
+        f"⏳ Todavía no puedes hacer pedidos: {plural} en revisión con {who}.\n"
+        "Te aviso por aquí apenas te acepten. Mientras tanto, en /proveedores puedes pedirle a otro."
+    )
+
+
 NOTHING_TO_CANCEL = "No hay nada que cancelar."
 
 

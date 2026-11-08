@@ -254,6 +254,29 @@ async def test_order_tool_passes_the_named_provider():
 # --- Textos ------------------------------------------------------------------------------
 
 
+def test_pending_requests_are_reported_as_in_review():
+    one = texts.suppliers_in_review(["Distribuidora El Barrio"])
+    assert "tu solicitud está en revisión con Distribuidora El Barrio" in one
+    two = texts.suppliers_in_review(["Distribuidora El Barrio", "Postobón Santander"])
+    assert "tus solicitudes están en revisión con Distribuidora El Barrio y Postobón Santander" in two
+
+
+@pytest.mark.asyncio
+async def test_no_suppliers_text_depends_on_pending_requests():
+    class Rows:
+        def __init__(self, names):
+            self.names = names
+
+        def all(self):
+            return self.names
+
+    store = SimpleNamespace(id=19)
+    pending = SimpleNamespace(scalars=AsyncMock(return_value=Rows(["Distribuidora El Barrio"])))
+    assert await handlers.no_suppliers_text(pending, store) == texts.suppliers_in_review(["Distribuidora El Barrio"])
+    none = SimpleNamespace(scalars=AsyncMock(return_value=Rows([])))
+    assert await handlers.no_suppliers_text(none, store) == texts.NO_SUPPLIERS
+
+
 def test_start_on_a_linked_chat_says_how_to_leave():
     text = texts.start_linked("Tienda Doña Marta")
     assert "Tienda Doña Marta" in text and "/salir" in text

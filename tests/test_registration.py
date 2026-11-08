@@ -271,5 +271,14 @@ async def test_store_without_providers_is_sent_to_choose_them(monkeypatch):
 
     monkeypatch.setattr(handlers, "get_store_by_chat", found)
     monkeypatch.setattr(handlers, "_reply", record)
-    assert await handlers.require_ready_store(message_update("vendí 2 cocas"), None) is None
+    class NoRequests:
+        def all(self):
+            return []
+
+    async def no_pending(query):
+        return NoRequests()
+
+    # Sin solicitudes enviadas: se le manda a escoger proveedores.
+    session = SimpleNamespace(scalars=no_pending)
+    assert await handlers.require_ready_store(message_update("vendí 2 cocas"), session) is None
     assert replies == [texts.NO_SUPPLIERS]

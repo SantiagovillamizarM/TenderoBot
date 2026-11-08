@@ -40,6 +40,7 @@ from app.inventory.engine import COLOMBIA_TZ, delivery_schedule, load_store_anal
 from app.inventory.orders import apply_order_changes, cap_to_available, order_total, to_order_lines
 from app.models import (
     SUPPLIER_APPROVED,
+    SUPPLIER_PENDING,
     Distributor,
     PendingAction,
     Product,
@@ -391,6 +392,20 @@ async def get_store_by_chat(session: AsyncSession, chat_id: int) -> Store | None
     return await session.scalar(select(Store).where(Store.telegram_chat_id == chat_id))
 
 
+async def no_suppliers_text(session: AsyncSession, store: Store) -> str:
+    """Tienda sin proveedor aceptado: si ya pidió a alguno, se le dice que está en revisión (no "escribe
+    /proveedores", que lo devuelve a un paso que ya hizo)."""
+    pending = (
+        await session.scalars(
+            select(Distributor.name)
+            .join(StoreSupplier, StoreSupplier.distributor_id == Distributor.id)
+            .where(StoreSupplier.store_id == store.id, StoreSupplier.status == SUPPLIER_PENDING)
+            .order_by(Distributor.name)
+        )
+    ).all()
+    return texts.suppliers_in_review(list(pending)) if pending else texts.NO_SUPPLIERS
+
+
 async def require_ready_store(update: Update, session: AsyncSession) -> Store | None:
     chat_id = _chat_id(update)
     if chat_id is None:
@@ -404,7 +419,7 @@ async def require_ready_store(update: Update, session: AsyncSession) -> Store | 
         return None
     if store.distributor_id is None:
         # Se registró en Telegram y todavía ningún proveedor la aceptó: no hay catálogo ni pedido.
-        await _reply(update, texts.NO_SUPPLIERS)
+        await _reply(update, await no_suppliers_text(session, store))
         return None
     if store.delivery_days_set_at is None:
         await _reply(update, texts.NEED_DAYS)
@@ -472,7 +487,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await _reply(update, texts.CONSENT_NOTICE, reply_markup=keyboards.consent_keyboard())
             return
         if store.distributor_id is None:
-            await _reply(update, texts.INTRO + "\n\n" + texts.NO_SUPPLIERS)
+            await _reply(update, texts.INTRO + "\n\n" + await no_suppliers_text(session, store))
             return
         if store.delivery_days_set_at is None:
             await _reply(update, texts.start_needs_days(store.name))
@@ -544,7 +559,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Esta misma cuenta ya había aceptado para esta tienda: entra directo.
             await _reply(update, texts.welcome_back(store.owner_name, store.name))
             if store.distributor_id is None:
-                await _reply(update, texts.NO_SUPPLIERS)
+                await _reply(update, await no_suppliers_text(session, store))
             elif store.delivery_days_set_at is None:
                 await ask_days(update, store, session)
     if previous_chat_id is not None and context is not None:
@@ -619,7 +634,7 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 session.add(StoreConsent(store_id=store.id, telegram_chat_id=chat_id, accepted_at=store.consent_at))
         await _reply(update, texts.WELCOME.format(owner=store.owner_name))
         if store.distributor_id is None:
-            await _reply(update, texts.NO_SUPPLIERS)
+            await _reply(update, await no_suppliers_text(session, store))
         elif store.delivery_days_set_at is None:
             await ask_days(update, store, session)
     await _remove_buttons(update)
