@@ -227,7 +227,7 @@ async def test_partial_receipt_adds_only_what_arrived(monkeypatch):
     receipts = [(r.product_id, r.quantity) for r in session.added if isinstance(r, Receipt)]
     assert receipts == [(10, 8), (11, 6)]
     assert order.status == "received"
-    assert replies == [texts.receipt_saved(["Coca-Cola 1L (4 de 12)"], date(2026, 11, 9))]
+    assert replies == [texts.receipt_saved(["Coca-Cola 1L (llegaron 8 de 12)"], date(2026, 11, 9))]
     assert "Te queda otro pedido en camino para el lunes 9/11" in replies[0]
     assert update.callback_query.removed
 

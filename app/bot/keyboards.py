@@ -114,6 +114,30 @@ def order_keyboard(pending_id: int) -> InlineKeyboardMarkup:
     return _confirm_cancel("✅ Enviar al distribuidor", SEND_ORDER, CANCEL_ORDER, pending_id)
 
 
+# Antes de armar un pedido se le pregunta al tendero: "ordstart:<opción>:<proveedor>" ("-" = sin proveedor).
+ORDER_OWN = "own"
+ORDER_SUGGESTED = "suggested"
+ORDER_NOT_NOW = "no"
+ORDER_START_PATTERN = r"^ordstart:(own|suggested|no):(\d+|-)$"
+
+
+def order_start_keyboard(distributor_id: int | None) -> InlineKeyboardMarkup:
+    key = str(distributor_id) if distributor_id is not None else "-"
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✍️ Armarlo yo", callback_data=f"ordstart:{ORDER_OWN}:{key}")],
+            [InlineKeyboardButton("📋 Ver pedido sugerido", callback_data=f"ordstart:{ORDER_SUGGESTED}:{key}")],
+            [InlineKeyboardButton("❌ Ahora no", callback_data=f"ordstart:{ORDER_NOT_NOW}:{key}")],
+        ]
+    )
+
+
+def parse_order_start(data: str) -> tuple[str, int | None]:
+    """'ordstart:own:3' -> ('own', 3); 'ordstart:no:-' -> ('no', None)"""
+    _prefix, choice, key = data.split(":")
+    return choice, int(key) if key.isdigit() else None
+
+
 # Días de entrega: la selección viaja en el callback ("days:<días marcados>:<acción>"),
 # así no hay estado a medio guardar. Acción = un día (0-6) para marcar/desmarcar u "ok".
 DAYS_PREFIX = "days"

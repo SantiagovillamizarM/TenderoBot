@@ -32,11 +32,11 @@ from app.ai.grok_client import (
 )
 from app.ai.matching import best_product_match, match_order_changes, match_sale_lines, match_stock_lines
 from app.ai.prompts import AGENT_SYSTEM_PROMPT
-from app.ai.tools import StoreActions, build_tools
+from app.ai.tools import StoreActions, build_tools, fold, provider_matches
 from app.bot import keyboards, provider_menu, registration, texts
 from app.config import get_settings
 from app.db import SessionLocal
-from app.inventory.engine import delivery_schedule, load_store_analysis, parse_visit_weekdays
+from app.inventory.engine import COLOMBIA_TZ, delivery_schedule, load_store_analysis, parse_visit_weekdays
 from app.inventory.orders import apply_order_changes, cap_to_available, order_total, to_order_lines
 from app.models import (
     SUPPLIER_APPROVED,
@@ -408,7 +408,7 @@ async def require_ready_store(update: Update, session: AsyncSession) -> Store | 
         return None
     if store.delivery_days_set_at is None:
         await _reply(update, texts.NEED_DAYS)
-        await ask_days(update, store)
+        await ask_days(update, store, session)
         return None
     if await session.scalar(select(Distributor.status).where(Distributor.id == store.distributor_id)) != "active":
         await _reply(update, texts.PROVIDER_SUSPENDED)
@@ -444,9 +444,11 @@ def route_days(store: Store) -> list[int]:
     return parse_visit_weekdays(store.route_weekdays) or list(range(7))
 
 
-async def ask_days(update: Update, store: Store) -> None:
+async def ask_days(update: Update, store: Store, session: AsyncSession | None = None) -> None:
     days = route_days(store)
-    await _reply(update, texts.ask_days(days), reply_markup=keyboards.days_keyboard(days, []))
+    # Con la sesión se nombra al proveedor: con varios, "tu proveedor" no dice cuál.
+    supplier = await supplier_name(session, store.distributor_id) if session is not None else None
+    await _reply(update, texts.ask_days(days, supplier), reply_markup=keyboards.days_keyboard(days, []))
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -474,9 +476,10 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         if store.delivery_days_set_at is None:
             await _reply(update, texts.start_needs_days(store.name))
-            await ask_days(update, store)
+            await ask_days(update, store, session)
             return
-        await _reply(update, texts.START_LINKED)
+        # Sigue la sesión, pero se dice en qué tienda está y cómo salir si no es la suya.
+        await _reply(update, texts.start_linked(store.name))
 
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -543,7 +546,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if store.distributor_id is None:
                 await _reply(update, texts.NO_SUPPLIERS)
             elif store.delivery_days_set_at is None:
-                await ask_days(update, store)
+                await ask_days(update, store, session)
     if previous_chat_id is not None and context is not None:
         try:
             await context.bot.send_message(previous_chat_id, texts.SESSION_MOVED)
@@ -618,7 +621,7 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if store.distributor_id is None:
             await _reply(update, texts.NO_SUPPLIERS)
         elif store.delivery_days_set_at is None:
-            await ask_days(update, store)
+            await ask_days(update, store, session)
     await _remove_buttons(update)
 
 
@@ -829,13 +832,42 @@ def products_by_sku(products: list[Product]) -> dict[str, Product]:
     return {keys[product.id]: product for product in products}
 
 
+# Un mensaje que empieza así es una venta, una consulta o un cambio al pedido, no una corrección
+# del conteo ni de lo recibido ("vendí 2 cocas y una de 400" no es "de 400 llegaron 400").
+NOT_A_CORRECTION_STEMS = ("vend", "quit", "agreg", "pid", "cuant", "regist", "envi")
+NOT_A_CORRECTION_WORDS = {
+    "venta", "ventas", "pon", "ponle", "ponme", "pongale", "sube", "subele", "baja", "bajale", "arma", "armame",
+    "manda", "mandale", "mandame", "dame", "dime", "cual", "cuales", "que", "hola", "se", "me", "le",
+}
+# Unidades que pueden seguir a un número dentro del nombre ("pony malta 330 ml 5").
+SIZE_UNITS = {"ml", "g", "gr", "grs", "kg", "l", "lt", "lts", "litro", "litros", "cc", "oz", "und", "unds"}
+
+
 def parse_stock_correction(text: str) -> tuple[str, int] | None:
+    """"coca litro 8" → ("coca litro", 8). None si el mensaje no es una corrección de un solo producto."""
     parts = text.strip().split()
     if len(parts) < 2 or not parts[-1].isdigit():
         return None
-    name = " ".join(parts[:-1]).strip()
+    name_parts = parts[:-1]
+    name = " ".join(name_parts).strip()
     if not name:
         return None
+    folded = fold(name)
+    first = folded.split()[0]
+    if first in NOT_A_CORRECTION_WORDS or first.startswith(NOT_A_CORRECTION_STEMS):
+        return None
+    # Varios productos en el mismo mensaje: no es la corrección de uno solo.
+    if "," in name or " y " in f" {folded} ":
+        return None
+    # Un número suelto en el nombre es otra cantidad ("2 cocas de litro 400"); solo vale como tamaño
+    # ("330 ml", "x 30").
+    for index, word in enumerate(name_parts):
+        if not word.isdigit():
+            continue
+        before = fold(name_parts[index - 1]) if index > 0 else ""
+        after = fold(name_parts[index + 1]) if index + 1 < len(name_parts) else ""
+        if before != "x" and after not in SIZE_UNITS:
+            return None
     return name, int(parts[-1])
 
 
@@ -1115,8 +1147,14 @@ async def route_text(update: Update, text: str, source: str) -> None:
         pending_order = await get_pending(session, store.id, KIND_ORDER)
         order_payload = dict(pending_order.payload) if pending_order is not None else None
         distributor_id = store.distributor_id
+        building_order = None
+        if order_payload is not None and order_payload.get("own"):
+            # Tocó "✍️ Armarlo yo": lo que escriba (sin "vendí") son productos para ese pedido.
+            building_order = await supplier_name(session, order_payload.get("distributor_id")) or "tu proveedor"
 
-    if get_settings().agent_enabled and await answer_with_agent(update, store_id, distributor_id, text, source, products):
+    if get_settings().agent_enabled and await answer_with_agent(
+        update, store_id, distributor_id, text, source, products, building_order=building_order
+    ):
         return
 
     # Respaldo sin agente: extracción directa (si el agente está apagado o Grok falló antes de responder).
@@ -1215,13 +1253,41 @@ async def change_open_order(
     messages: list[BotMessage] = []
     updated: list[dict] = []
     closed: list[str] = []
+    already_sent: list[BotMessage] = []
+    sent_info: list[dict] = []
     async with session_scope() as session:
+        found = await session.get(Store, store_id)
+        store = found if isinstance(found, Store) else None
         for distributor_id, group in groups.items():
             name = await supplier_name(session, distributor_id)
             pending = await get_pending(session, store_id, order_kind(distributor_id))
             if pending is None:
-                closed.append(name or "tu proveedor")
-                continue
+                schedule = await supplier_schedule(session, store, distributor_id) if store is not None else None
+                if schedule is not None and await order_sent_for(
+                    session, store_id, schedule.next_delivery, distributor_id
+                ):
+                    # Solo hay un pedido por entrega: el de esa entrega ya salió y no se puede cambiar.
+                    already_sent.append(BotMessage(texts.order_already_sent(schedule.next_delivery, name)))
+                    sent_info.append({"proveedor": name, "entrega": texts.day_label(schedule.next_delivery)})
+                    continue
+                if schedule is None:
+                    closed.append(name or "tu proveedor")
+                    continue
+                # "Pídele 3 cajas de coca" sin pedido abierto: el tendero arma el suyo, solo con lo que pide
+                # (no se arma el sugerido completo).
+                pending = await replace_pending(
+                    session,
+                    store_id,
+                    order_kind(distributor_id),
+                    {
+                        "distributor_id": distributor_id,
+                        "lines": [],
+                        "delivery_date": schedule.next_delivery.isoformat(),
+                        "order_deadline": schedule.order_deadline.isoformat(),
+                        "own": True,
+                    },
+                    ttl=ORDER_PENDING_TTL,
+                )
             payload = dict(pending.payload)
             supplier_products = {
                 p.id: p for p in products if getattr(p, "distributor_id", None) == distributor_id
@@ -1245,30 +1311,67 @@ async def change_open_order(
             updated.append({"proveedor": name, "productos": len(lines), "total_pesos": int(total),
                             "recortados_por_disponibilidad": capped.not_found})
     if not updated:
+        if already_sent and not closed:
+            return already_sent, {
+                "error": "Ya se envió el pedido de esa entrega: no se puede cambiar ni armar otro. "
+                         "Cuando llegue, el tendero escribe /recibido.",
+                "ya_enviado": sent_info,
+            }
         if closed:
             return [BotMessage(texts.NOTHING_PENDING)], {
                 "error": f"No hay un pedido abierto con {', '.join(closed)}. Arma uno primero con armar_pedido."
             }
         return [], {"error": "No reconocí los productos del cambio.", "no_encontrados": unknown}
+    messages.extend(already_sent)
     info = {"borrador": "actualizado", "pedidos": updated, "no_encontrados": unknown,
-            "sin_pedido_abierto": closed, "nota": "El tendero lo envía con el botón de cada pedido."}
+            "sin_pedido_abierto": closed, "nota": "El tendero lo envía con el botón de cada pedido. "
+            "Dile a qué proveedor le quedó cada cambio."}
+    if sent_info:
+        info["ya_enviado"] = sent_info
     if len(updated) == 1:
         info.update(updated[0])
     return messages, info
 
 
-async def prepare_orders(session: AsyncSession, store) -> list[tuple[BotMessage, dict]] | None:
-    """Un pedido sugerido por proveedor para su próxima entrega, cada uno como borrador. None si no hay tienda."""
+ALL_SUPPLIERS = object()
+
+
+async def prepare_orders(
+    session: AsyncSession, store, only_distributor=ALL_SUPPLIERS, empty: bool = False
+) -> list[tuple[BotMessage, dict]] | None:
+    """Un pedido sugerido por proveedor para su próxima entrega, cada uno como borrador. None si no hay tienda.
+
+    `only_distributor`: solo el pedido de ese proveedor. `empty`: borrador vacío para que el tendero
+    lo arme él mismo ("✍️ Armarlo yo").
+    """
     analysis = await load_store_analysis(session, store.id)
     if analysis is None:
         return None
     results = []
     for plan in analysis.plans:
         distributor_id = plan.distributor_id
+        if only_distributor is not ALL_SUPPLIERS and distributor_id != only_distributor:
+            continue
         name = await supplier_name(session, distributor_id)
         if await order_sent_for(session, store.id, plan.next_delivery, distributor_id):
             results.append((BotMessage(texts.order_already_sent(plan.next_delivery, name)),
                             {"proveedor": name, "ya_enviado": plan.next_delivery.isoformat()}))
+            continue
+        if empty:
+            await replace_pending(
+                session,
+                store.id,
+                order_kind(distributor_id),
+                {
+                    "distributor_id": distributor_id,
+                    "lines": [],
+                    "delivery_date": plan.next_delivery.isoformat(),
+                    "order_deadline": plan.order_deadline.isoformat(),
+                    "own": True,  # lo arma el tendero: lo que escriba son productos para este pedido
+                },
+                ttl=ORDER_PENDING_TTL,
+            )
+            results.append((BotMessage(texts.order_own_start(name)), {"proveedor": name, "borrador": "vacio"}))
             continue
         target = distributor_id if distributor_id is not None else store.distributor_id
         by_id = {p.id: p for p in await load_active_products(session, target)}
@@ -1307,7 +1410,31 @@ async def prepare_orders(session: AsyncSession, store) -> list[tuple[BotMessage,
     return results
 
 
-def agent_catalog(products: list[Product]) -> list[dict]:
+async def ask_orders(session: AsyncSession, store, only_distributor=ALL_SUPPLIERS) -> list[BotMessage] | None:
+    """Antes de armar nada se pregunta, por proveedor: ✍️ Armarlo yo, 📋 Ver pedido sugerido o ❌ Ahora no.
+
+    Si el pedido de esa entrega ya salió, se dice eso. None si no hay tienda.
+    """
+    analysis = await load_store_analysis(session, store.id)
+    if analysis is None:
+        return None
+    messages = []
+    for plan in analysis.plans:
+        if only_distributor is not ALL_SUPPLIERS and plan.distributor_id != only_distributor:
+            continue
+        name = await supplier_name(session, plan.distributor_id)
+        if await order_sent_for(session, store.id, plan.next_delivery, plan.distributor_id):
+            messages.append(BotMessage(texts.order_already_sent(plan.next_delivery, name)))
+            continue
+        messages.append(BotMessage(
+            texts.order_question(plan.next_delivery, plan.order_deadline, name),
+            keyboards.order_start_keyboard(plan.distributor_id),
+        ))
+    return messages
+
+
+def agent_catalog(products: list[Product], supplier_names: dict[int, str] | None = None) -> list[dict]:
+    names = supplier_names or {}
     return [
         {
             **item,
@@ -1316,19 +1443,44 @@ def agent_catalog(products: list[Product]) -> list[dict]:
             # Agotado = no alcanza para una caja completa (igual que en /catalogo).
             "sold_out": product.available_units is not None
             and product.available_units < max(1, product.units_per_case),
+            # A quién se le pide (con varios proveedores, el agente no debe mezclar pedidos).
+            **({"supplier": names[distributor]} if (distributor := getattr(product, "distributor_id", None)) in names
+               else {}),
         }
         for item, product in zip(products_as_catalog(products), products, strict=True)
     ]
+
+
+async def supplier_names_for(products: list[Product]) -> dict[int, str]:
+    ids = {distributor for product in products if (distributor := getattr(product, "distributor_id", None))}
+    if not ids:
+        return {}
+    async with session_scope() as session:
+        rows = (await session.execute(select(Distributor.id, Distributor.name).where(Distributor.id.in_(ids)))).all()
+    return {int(row[0]): str(row[1]) for row in rows}
 
 
 def _days_left(value: float) -> float | None:
     return round(value, 1) if math.isfinite(value) else None
 
 
-def store_actions(store_id: int, products: list[Product], source: str, shown: dict[str, BotMessage]) -> StoreActions:
+# Marca en `notes`: lo que se le muestra al tendero ya lo dice todo (el pedido ya se envió) y la
+# respuesta del modelo sobra (en las pruebas decía "Ya armé el pedido" justo encima de "Ya enviaste...").
+ONLY_BOT_MESSAGES = "solo_mensajes_del_bot"
+
+
+def store_actions(
+    store_id: int,
+    products: list[Product],
+    source: str,
+    shown: dict[str, BotMessage],
+    supplier_names: dict[int, str] | None = None,
+    notes: set[str] | None = None,
+) -> StoreActions:
     """Las herramientas del agente para una tienda. Lo que hay que mostrar con botones queda en `shown`
     (uno por tipo: si el agente arma dos borradores del mismo tipo, vale el último)."""
     names = names_by_sku(products)
+    notes = notes if notes is not None else set()
 
     async def stock() -> list[dict]:
         async with session_scope() as session:
@@ -1369,16 +1521,51 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
         )
         return {"borrador": "creado"}
 
-    async def suggest_order() -> dict:
+    def distributor_for(provider_text: str):
+        """El proveedor de la tienda que nombró el tendero (ALL_SUPPLIERS si no nombró ninguno, None si no es suyo)."""
+        if not provider_text:
+            return ALL_SUPPLIERS
+        found = [key for key, name in (supplier_names or {}).items() if provider_matches(provider_text, name)]
+        return found[0] if len(found) == 1 else None
+
+    def unknown_provider(provider_text: str) -> dict:
+        return {"error": f"No trabajas con '{provider_text}'.",
+                "tus_proveedores": sorted((supplier_names or {}).values())}
+
+    async def suggest_order(provider_text: str = "") -> dict:
+        only = distributor_for(provider_text)
+        if only is None:
+            return unknown_provider(provider_text)
         async with session_scope() as session:
             store = await session.get(Store, store_id)
-            prepared = await prepare_orders(session, store) if store is not None else None
+            prepared = await prepare_orders(session, store, only_distributor=only) if store is not None else None
         if not prepared:
             return {"error": "No se pudo armar el pedido"}
         for index, (message, _info) in enumerate(prepared):
             shown[f"{KIND_ORDER}#{index}"] = message
         infos = [info for _message, info in prepared]
+        if all("ya_enviado" in info for info in infos):
+            # No se armó nada: ya salió el pedido de esa entrega. El bot ya lo dice con su mensaje.
+            notes.add(ONLY_BOT_MESSAGES)
+            return {"borrador": "no_creado", "ya_enviado": [info for info in infos],
+                    "nota": "NO armaste ningún pedido: ya se envió el de esa entrega. No digas que lo armaste."}
         return infos[0] if len(infos) == 1 else {"pedidos": infos, "nota": "Un pedido por proveedor."}
+
+    async def ask_order(provider_text: str = "") -> dict:
+        only = distributor_for(provider_text)
+        if only is None:
+            return unknown_provider(provider_text)
+        async with session_scope() as session:
+            store = await session.get(Store, store_id)
+            messages = await ask_orders(session, store, only_distributor=only) if store is not None else None
+        if not messages:
+            return {"error": "No se pudo preparar el pedido"}
+        for index, message in enumerate(messages):
+            shown[f"{KIND_ORDER}#{index}"] = message
+        # La pregunta con sus botones ya lo dice todo.
+        notes.add(ONLY_BOT_MESSAGES)
+        return {"pregunta": "enviada",
+                "nota": "No armaste ningún pedido: el bot le preguntó con botones si lo arma él o ve el sugerido."}
 
     async def change_order(changes: list[OrderChange]) -> dict:
         if not changes:
@@ -1387,6 +1574,11 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
         if "error" not in info:
             for index, message in enumerate(messages):
                 shown[f"{KIND_ORDER}#{index}"] = message
+        elif info.get("ya_enviado"):
+            # El pedido de esa entrega ya salió: se dice eso, no "¿quieres que arme uno?".
+            for index, message in enumerate(messages):
+                shown[f"{KIND_ORDER}#{index}"] = message
+            notes.add(ONLY_BOT_MESSAGES)
         return info
 
     async def compare(text: str) -> dict:
@@ -1398,6 +1590,12 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
         item = catalog_merge.find_by_text(items, text)
         if item is None:
             return {"no_encontrado": text}
+        if len(item.offers) < 2:
+            # Con un solo proveedor no hay "más barato" ni a quién cambiarse.
+            offer = item.offers[0]
+            return {"producto": item.name, "solo_lo_vende": offer.distributor_name, "precio_unidad": int(offer.price),
+                    "nota": "Solo uno de sus proveedores lo vende: no hay con qué comparar. "
+                            "No le ofrezcas cambiar de proveedor."}
         return catalog_merge.comparison(item)
 
     async def prefer(product_text: str, provider_text: str) -> dict:
@@ -1418,14 +1616,16 @@ def store_actions(store_id: int, products: list[Product], source: str, shown: di
                 "precio_unidad": int(offer.price)}
 
     return StoreActions(
-        catalog=agent_catalog(products),
+        catalog=agent_catalog(products, supplier_names),
         stock=stock,
         alerts=alerts,
         draft_sales=draft_sales,
         suggest_order=suggest_order,
+        suggest_order_for=suggest_order,
         change_order=change_order,
         compare=compare,
         prefer=prefer,
+        ask_order=ask_order,
     )
 
 
@@ -1443,13 +1643,36 @@ def agent_outcome(result: AgentResult | None, shown: dict[str, BotMessage]) -> s
 
 
 async def answer_with_agent(
-    update: Update, store_id: int, distributor_id: int, text: str, source: str, products: list[Product]
+    update: Update,
+    store_id: int,
+    distributor_id: int,
+    text: str,
+    source: str,
+    products: list[Product],
+    building_order: str | None = None,
 ) -> bool:
-    """El agente con herramientas responde al tendero. False si no alcanzó a hacer nada (usar respaldo)."""
+    """El agente con herramientas responde al tendero. False si no alcanzó a hacer nada (usar respaldo).
+
+    `building_order`: proveedor del pedido que el tendero está armando él mismo (✍️ Armarlo yo).
+    """
     shown: dict[str, BotMessage] = {}
-    actions = store_actions(store_id, products, source, shown)
+    notes: set[str] = set()
     try:
-        result: AgentResult | None = await run_agent(text, build_tools(actions, user_message=text), AGENT_SYSTEM_PROMPT)
+        suppliers = await supplier_names_for(products)
+    except Exception:
+        logger.warning("No se pudieron leer los nombres de los proveedores")
+        suppliers = {}
+    actions = store_actions(store_id, products, source, shown, suppliers, notes)
+    system_prompt = AGENT_SYSTEM_PROMPT
+    if building_order is not None:
+        # Al final del prompt, para no romper la caché de las instrucciones fijas.
+        system_prompt += (
+            f"\nAhora mismo el tendero está armando su propio pedido a {building_order}. Si escribe productos "
+            "con cantidades sin decir que los vendió, son para ese pedido: usa ajustar_pedido, no registrar_ventas."
+        )
+    tools = build_tools(actions, user_message=text, building_order=building_order)
+    try:
+        result: AgentResult | None = await run_agent(text, tools, system_prompt)
     except Exception:
         logger.warning("El agente falló (Grok no respondió)")
         result = None
@@ -1457,6 +1680,8 @@ async def answer_with_agent(
             return False
     set_task_info(outcome=agent_outcome(result, shown))
     reply = result.reply if result is not None else ""
+    if ONLY_BOT_MESSAGES in notes and KIND_SALES not in shown:
+        reply = ""
     if reply:
         await _reply(update, reply)
     for message in shown.values():
@@ -1599,14 +1824,39 @@ async def handle_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Pedido sugerido para la próxima entrega. Queda como borrador que el tendero puede cambiar."""
+    """/pedido: primero pregunta si quiere hacer un pedido (lo arma él o ve el sugerido); no arma nada solo."""
     async with session_scope() as session:
         store = await require_ready_store(update, session)
         if store is None:
             return
-        prepared = await prepare_orders(session, store)
-    if prepared is None:
+        messages = await ask_orders(session, store)
+    if messages is None:
         await _ask_login(update)
+        return
+    for message in messages:
+        await _reply(update, message.text, reply_markup=message.markup)
+
+
+async def handle_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Respuesta a la pregunta del pedido: ✍️ Armarlo yo, 📋 Ver pedido sugerido o ❌ Ahora no."""
+    await _answer_callback(update)
+    query = update.callback_query
+    if query is None:
+        return
+    choice, distributor_id = keyboards.parse_order_start(query.data or "")
+    await _remove_buttons(update)
+    if choice == keyboards.ORDER_NOT_NOW:
+        await _reply(update, texts.ORDER_NOT_NOW)
+        return
+    async with session_scope() as session:
+        store = await require_ready_store(update, session)
+        if store is None:
+            return
+        prepared = await prepare_orders(
+            session, store, only_distributor=distributor_id, empty=choice == keyboards.ORDER_OWN
+        )
+    if not prepared:
+        await _stale_button(update)
         return
     for message, _info in prepared:
         await _reply(update, message.text, reply_markup=message.markup)
@@ -1735,9 +1985,13 @@ async def handle_received(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         pending_id = pending.id
     await _reply(
-        update, texts.receipt_summary(lines, delivery, supplier),
+        update, texts.receipt_summary(lines, delivery, supplier, today=colombia_today()),
         reply_markup=keyboards.confirm_receipt_keyboard(pending_id),
     )
+
+
+def colombia_today() -> date:
+    return datetime.now(UTC).astimezone(COLOMBIA_TZ).date()
 
 
 async def apply_receipt_correction(
@@ -1760,11 +2014,19 @@ async def apply_receipt_correction(
     product_id = products_by_sku(order_products)[match["sku"]].id
     for line in lines:
         if int(line["product_id"]) == product_id:
+            ordered = int(line.get("ordered") or 0)
+            if quantity > ordered:
+                # No puede llegar más de lo pedido: casi siempre es un mensaje que no era una corrección.
+                await _reply(update, texts.receipt_too_many(str(line["name"]), ordered))
+                return
             line["units"] = quantity
     pending = await replace_pending(session, store.id, KIND_RECEIPT, {**draft.payload, "lines": lines})
     await _reply(
         update,
-        texts.receipt_summary(lines, date.fromisoformat(delivery) if delivery else None, draft.payload.get("supplier")),
+        texts.receipt_summary(
+            lines, date.fromisoformat(delivery) if delivery else None, draft.payload.get("supplier"),
+            today=colombia_today(),
+        ),
         reply_markup=keyboards.confirm_receipt_keyboard(pending.id),
     )
 
@@ -1792,7 +2054,7 @@ async def handle_confirm_receipt(update: Update, context: ContextTypes.DEFAULT_T
                     Receipt(store_id=store.id, product_id=int(line["product_id"]), quantity=units, received_at=now)
                 )
             if units < ordered:
-                missing.append(f"{line['name']} ({ordered - units} de {ordered})")
+                missing.append(texts.receipt_missing_line(str(line["name"]), units, ordered))
         order.status = "received"
         await session.delete(pending)
         following = await oldest_sent_order(session, store.id, exclude_id=order.id)
@@ -1881,6 +2143,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(handle_cancel_sales, pattern=keyboards.draft_pattern(keyboards.CANCEL_SALES)))
     application.add_handler(CallbackQueryHandler(handle_confirm_stock, pattern=keyboards.draft_pattern(keyboards.CONFIRM_STOCK)))
     application.add_handler(CallbackQueryHandler(handle_cancel_stock, pattern=keyboards.draft_pattern(keyboards.CANCEL_STOCK)))
+    application.add_handler(CallbackQueryHandler(handle_order_start, pattern=keyboards.ORDER_START_PATTERN))
     application.add_handler(CallbackQueryHandler(handle_send_order, pattern=keyboards.draft_pattern(keyboards.SEND_ORDER)))
     application.add_handler(CallbackQueryHandler(handle_cancel_order, pattern=keyboards.draft_pattern(keyboards.CANCEL_ORDER)))
     application.add_handler(

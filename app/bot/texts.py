@@ -124,11 +124,20 @@ QUICK_START = (
     "🛒 Cada vez que vendas, escríbeme o mándame un audio con lo que vendiste. "
     "No tienes que decir \"vendí\", basta con: 2 coca litro y un pan\n\n"
     "📷 Para contar lo que tienes, mándame una foto del estante.\n\n"
-    "📦 Escribe /pedido y te digo qué pedirles a tus proveedores.\n\n"
+    "📦 Cuando quieras hacerles un pedido a tus proveedores, escribe /pedido: lo armas tú o te propongo uno.\n\n"
     "Antes de guardar algo siempre te pregunto. Escribe /ayuda para ver más."
 )
 START_UNLINKED = INTRO + "\n\n" + ASK_ACCOUNT
 START_LINKED = INTRO + "\n\n" + QUICK_START
+
+
+def start_linked(store_name: str) -> str:
+    """/start en un chat que ya tiene tienda: sigue la sesión y dice cómo salir si no es su tienda."""
+    return (
+        START_LINKED
+        + f"\n\n🏪 Estás en la tienda {store_name}. ¿No es tu tienda? Escribe /salir para entrar "
+        "con otro número o registrar una tienda nueva."
+    )
 
 
 def start_needs_days(store_name: str) -> str:
@@ -147,9 +156,10 @@ def join_days(days: list[int]) -> str:
     return ", ".join(names[:-1]) + " y " + names[-1]
 
 
-def ask_days(route_days: list[int]) -> str:
+def ask_days(route_days: list[int], supplier: str | None = None) -> str:
+    who = supplier or "Tu proveedor"
     return (
-        f"📅 Tu proveedor pasa por tu barrio los {join_days(route_days)}. "
+        f"📅 {who} pasa por tu barrio los {join_days(route_days)}. "
         "¿Qué días quieres recibir la mercancía?\n\n"
         "Marca uno o varios y pulsa Listo."
     )
@@ -263,6 +273,10 @@ def order_draft(
     if lines:
         rows.append(f"📦 Pedido{to} para el {day_label(delivery)}:")
         for line in lines:
+            if line.units == line.cases:
+                # Se pide de a uno (una cubeta de huevos, un bulto): "6 Huevos AAA x 30", no "6 cajas".
+                rows.append(f"• {line.cases} {line.name} — {line.reason}")
+                continue
             word = "caja" if line.cases == 1 else "cajas"
             rows.append(f"• {line.cases} {word} {line.name} — {line.reason}")
         rows.append(f"Total: {cop(total)} COP")
@@ -280,6 +294,29 @@ def order_draft(
     rows.append("")
     rows.append(f"Tienes hasta el {deadline_label(deadline)} para enviarlo.")
     return "\n".join(rows)
+
+
+def order_question(delivery, deadline, supplier: str | None = None) -> str:
+    """Antes de armar nada: ¿quiere hacer un pedido? Lo arma él o ve el sugerido."""
+    to = f" a {supplier}" if supplier else ""
+    return (
+        f"📦 ¿Quieres hacerle un pedido{to} para el {day_label(delivery)}?\n"
+        f"Tienes hasta el {deadline_label(deadline)} para enviarlo.\n\n"
+        "✍️ Armarlo yo: tú me dices qué quieres pedir.\n"
+        "📋 Ver pedido sugerido: te propongo uno según lo que vendes."
+    )
+
+
+def order_own_start(supplier: str | None = None) -> str:
+    to = f"pedirle a {supplier}" if supplier else "pedir"
+    return (
+        f"✍️ Listo. Dime qué quieres {to}, por ejemplo:\n"
+        "\"3 cajas de coca litro y 1 cubeta de huevos\"\n\n"
+        "Te muestro el pedido para que lo revises antes de enviarlo."
+    )
+
+
+ORDER_NOT_NOW = "Listo, no armé ningún pedido. Cuando quieras, escribe /pedido."
 
 
 def order_sent(
@@ -306,11 +343,16 @@ def order_already_sent(delivery, supplier: str | None = None) -> str:
     )
 
 
-def receipt_summary(lines: list[dict], delivery, supplier: str | None = None) -> str:
-    """Lo que trae el pedido, para que el tendero confirme lo que de verdad llegó."""
+def receipt_summary(lines: list[dict], delivery, supplier: str | None = None, today=None) -> str:
+    """Lo que trae el pedido, para que el tendero confirme lo que de verdad llegó.
+
+    Con `today` antes del día de entrega, se le avisa que confirme solo cuando ya le haya llegado.
+    """
     of = f" de {supplier}" if supplier else ""
     header = f"📦 Pedido{of} del {day_label(delivery)}." if delivery else f"📦 Tu pedido{of}."
     rows = [header + " ¿Llegó así?"]
+    if delivery is not None and today is not None and today < delivery:
+        rows.insert(0, f"⚠️ Este pedido es para el {day_label(delivery)}. Confírmalo solo cuando ya te haya llegado.\n")
     for line in lines:
         units, ordered = int(line["units"]), int(line["ordered"])
         word = "unidad" if ordered == 1 else "unidades"
@@ -323,6 +365,19 @@ def receipt_summary(lines: list[dict], delivery, supplier: str | None = None) ->
     rows.append("Ejemplo: si de 12 Coca-Cola litro llegaron 8, escribe: coca litro 8")
     rows.append("Si no llegó nada de un producto, escribe el producto y 0.")
     return "\n".join(rows)
+
+
+def receipt_too_many(name: str, ordered: int) -> str:
+    word = "unidad" if ordered == 1 else "unidades"
+    return (
+        f"De {name} pediste {ordered} {word}: no pueden haber llegado más. "
+        f"Escríbeme cuántas llegaron, de 0 a {ordered}."
+    )
+
+
+def receipt_missing_line(name: str, units: int, ordered: int) -> str:
+    """'Coca-Cola 1 litro (llegaron 100 de 108)'."""
+    return f"{name} (llegaron {units} de {ordered})"
 
 
 def receipt_saved(missing: list[str], next_delivery=None) -> str:
@@ -445,7 +500,7 @@ REG_QUESTIONS = {
         "para que no quede una ubicación equivocada. Si prefieres no compartirla, también puedes tocar Saltar."
     ),
 }
-REG_USE_BUTTONS = "Escoge con los botones de arriba 👆"
+REG_USE_BUTTONS = "Escoge una opción con los botones 👇"
 REG_LOCATION_HINT = "Toca 📍 Enviar ubicación o Saltar, abajo."
 REG_CONFIRM_HINT = "Revisa los datos y toca ✅ Confirmar o ✏️ Empezar de nuevo."
 REG_CANCELLED = (

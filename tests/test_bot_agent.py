@@ -198,7 +198,7 @@ async def test_route_text_respects_agent_flag(bot, monkeypatch, enabled):
     async def no_pending(session, store_id, kind):
         return None
 
-    async def agent(update, store_id, distributor_id, text, source, products):
+    async def agent(update, store_id, distributor_id, text, source, products, building_order=None):
         calls.append("agent")
         return True
 
@@ -310,7 +310,9 @@ async def test_suggest_order_when_already_sent(bot, store_data, monkeypatch):
     monkeypatch.setattr(handlers, "order_sent_for", sent)
     shown = {}
     info = await actions(shown).suggest_order()
-    assert info == {"proveedor": None, "ya_enviado": "2026-11-12"}
+    # No se armó nada: el modelo no debe decir "Ya armé el pedido".
+    assert info["borrador"] == "no_creado"
+    assert info["ya_enviado"] == [{"proveedor": None, "ya_enviado": "2026-11-12"}]
     assert bot.drafts == []
     assert shown[f"{handlers.KIND_ORDER}#0"].text == texts.order_already_sent(DELIVERY)
 
@@ -343,14 +345,72 @@ async def test_change_order_updates_open_draft(bot, monkeypatch):
     assert f"{handlers.KIND_ORDER}#0" in shown
 
 
+def order_button(data: str):
+    return SimpleNamespace(callback_query=SimpleNamespace(data=data))
+
+
+async def _no_answer(update):
+    return None
+
+
 @pytest.mark.asyncio
-async def test_pedido_command_shows_draft_with_buttons(bot, store_data, monkeypatch):
+async def test_pedido_command_asks_before_building_anything(bot, store_data, monkeypatch):
     async def ready(update, session):
         return SimpleNamespace(id=7, distributor_id=1)
 
     monkeypatch.setattr(handlers, "require_ready_store", ready)
     await handlers.handle_order(None, None)
     text, markup = bot.replies[0]
+    assert text.startswith("📦 ¿Quieres hacerle un pedido")
+    assert [row[0].callback_data for row in markup.inline_keyboard] == [
+        "ordstart:own:1", "ordstart:suggested:1", "ordstart:no:1",
+    ]
+    assert bot.drafts == []  # no se armó ningún pedido
+
+
+@pytest.mark.asyncio
+async def test_suggested_button_shows_draft_with_send_button(bot, store_data, monkeypatch):
+    async def ready(update, session):
+        return SimpleNamespace(id=7, distributor_id=1)
+
+    monkeypatch.setattr(handlers, "require_ready_store", ready)
+    monkeypatch.setattr(handlers, "_answer_callback", _no_answer)
+    monkeypatch.setattr(handlers, "_remove_buttons", _no_answer)
+    await handlers.handle_order_start(order_button("ordstart:suggested:1"), None)
+    text, markup = bot.replies[0]
     assert "Coca-Cola 1 litro" in text
-    assert markup is not None
+    assert markup.inline_keyboard[0][0].text == "✅ Enviar al distribuidor"
     assert bot.drafts[0].kind == handlers.order_kind(1)  # un borrador por proveedor
+
+
+@pytest.mark.asyncio
+async def test_own_button_starts_an_empty_order(bot, store_data, monkeypatch):
+    async def ready(update, session):
+        return SimpleNamespace(id=7, distributor_id=1)
+
+    monkeypatch.setattr(handlers, "require_ready_store", ready)
+    monkeypatch.setattr(handlers, "_answer_callback", _no_answer)
+    monkeypatch.setattr(handlers, "_remove_buttons", _no_answer)
+    await handlers.handle_order_start(order_button("ordstart:own:1"), None)
+    assert bot.replies[0][0] == texts.order_own_start(None)
+    assert bot.drafts[0].payload["lines"] == []
+    assert bot.drafts[0].payload["delivery_date"] == DELIVERY.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_not_now_button_builds_nothing(bot, monkeypatch):
+    monkeypatch.setattr(handlers, "_answer_callback", _no_answer)
+    monkeypatch.setattr(handlers, "_remove_buttons", _no_answer)
+    await handlers.handle_order_start(order_button("ordstart:no:1"), None)
+    assert bot.replies == [(texts.ORDER_NOT_NOW, None)]
+    assert bot.drafts == []
+
+
+@pytest.mark.asyncio
+async def test_agent_order_tool_asks_unless_suggestion_requested(bot, store_data):
+    shown = {}
+    tools = {tool.name: tool for tool in handlers.build_tools(actions(shown))}
+    info = await tools["armar_pedido"].run({})
+    assert info["pregunta"] == "enviada" and bot.drafts == []
+    info = await tools["armar_pedido"].run({"sugerido": True})
+    assert info["borrador"] == "creado"
