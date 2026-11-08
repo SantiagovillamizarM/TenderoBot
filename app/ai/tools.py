@@ -51,6 +51,49 @@ def pack_size(product: dict) -> int:
     return int(match.group(1)) if match else 1
 
 
+NUMBER_WORDS = {
+    "un", "una", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once",
+    "doce", "trece", "catorce", "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve", "veinte",
+    "treinta", "cuarenta", "cincuenta", "cien", "media", "medio", "docena", "docenas", "par", "ambos",
+}
+
+
+# Números compuestos en letras: "veintidós", "dieciocho", "treinta y dos", "ciento veinte".
+NUMBER_STEMS = ("veinti", "dieci", "treint", "cuarent", "cincuent", "sesent", "setent", "ochent", "novent",
+                "cient", "doscient", "trescient", "quinient", "mil")
+
+
+def is_quantity(said: str) -> bool:
+    """¿La cita de la cantidad es de verdad un número? ('2', 'una', 'veintidós', 'media docena'; no 'litro')."""
+    folded = fold(said)
+    if any(ch.isdigit() for ch in folded):
+        return True
+    return any(word in NUMBER_WORDS or word.startswith(NUMBER_STEMS) for word in folded.split())
+
+
+SIZE_UNITS = {"ml", "g", "gr", "grs", "gramos", "kg", "kilo", "kilos", "l", "lt", "lts", "litro", "litros", "cc", "oz"}
+
+
+def quote_is_only_a_size(said: str, message: str) -> bool:
+    """¿El número citado solo aparece en el mensaje como tamaño del producto? ("Axion 400 g", "Jabón Rey x 3").
+
+    Entonces no es la cantidad vendida: el modelo tomó el tamaño por cantidad.
+    """
+    number = "".join(ch for ch in fold(said) if ch.isdigit())
+    if not number:
+        return False
+    words = re.findall(r"[a-z]+|\d+(?:[.,]\d+)?", fold(message))
+    places = [index for index, word in enumerate(words) if word == number]
+    if not places:
+        return False
+    for index in places:
+        before = words[index - 1] if index > 0 else ""
+        after = words[index + 1] if index + 1 < len(words) else ""
+        if before != "x" and after not in SIZE_UNITS:
+            return False  # al menos una vez aparece como cantidad de verdad
+    return True
+
+
 def provider_words(name: str) -> list[str]:
     """Las palabras que identifican a un proveedor: 'Mayorista La Economía' → ['economia']."""
     return [word for word in fold(name).split() if word not in GENERIC_PROVIDER_WORDS and len(word) > 2]
@@ -224,11 +267,15 @@ def build_tools(actions: StoreActions, user_message: str | None = None, building
         Lo decide el código, no el modelo: en la evaluación, con solo instrucciones, Grok a veces
         asumía 1 cuando el tendero no dijo cuántas, o registraba huevos sueltos como cubetas.
         """
-        if not said_quantity:
+        if not said_quantity or not is_quantity(said_quantity):
+            # Vacío, o una cita que no es un número ("litro" en "se fue leche litro").
             return "No dijo cuántas vendió"
         if user_message is not None and fold(said_quantity) not in fold(user_message):
             # El modelo citó una cantidad que el tendero no dijo ("una" cuando solo escribió "vendí pony").
             return "No dijo cuántas vendió"
+        if user_message is not None and quote_is_only_a_size(said_quantity, user_message):
+            # "me compraron Axion 400 g" o "1 Jabón Rey x 3": el número es el tamaño, no la cantidad.
+            return "El número que citó es el tamaño del producto, no la cantidad: pregúntale cuántas vendió"
         size = pack_size(by_sku.get(str(line.sku), {}))
         said = f"{said_quantity} {line.product_text}".casefold()
         if size > 1 and any(word in said for word in LOOSE_WORDS):

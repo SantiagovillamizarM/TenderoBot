@@ -18,7 +18,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, select, update
@@ -46,7 +46,7 @@ from app.load.runner import (
 )
 from app.load.units import WorkUnit
 from app.models import Distributor, PendingAction, Product, Sale, StockCount, Store
-from app.store_catalog import load_items, store_products
+from app.store_catalog import item_products, load_items, store_products
 from app.usage_log import save_usage
 
 # El distribuidor que crea scripts/seed.py en la base de carga.
@@ -282,7 +282,7 @@ class Worker:
         async with SessionLocal() as session:
             # El catálogo de la tienda con TODOS sus proveedores, como en el bot.
             items = await load_items(session, await session.get(Store, store_id))
-            products = [item.preferred.product for item in items]
+            products = item_products(items)  # como en el bot: también con los nombres de los otros proveedores
             item_of = item_lookup(items, products)
             stock = {}
             if "stock_de" in task.expected:
@@ -290,7 +290,11 @@ class Worker:
                 by_id = {offer.product.id: item.key for item in items for offer in item.offers}
                 stock = {by_id.get(p.product_id, p.sku): p.stock for p in analysis.products}
         observed = Observed()
-        actions = recording_actions(handlers.store_actions(store_id, products, "text", {}), observed)
+        # En el bot, "hazme el pedido" pregunta con botones (✍️ Armarlo yo / 📋 Ver pedido sugerido). En la
+        # carga nadie toca botones: el tendero simulado escoge el sugerido, y sus cambios ("quita el arroz")
+        # caen sobre ese borrador, como en la definición de la unidad de trabajo.
+        bot_actions = replace(handlers.store_actions(store_id, products, "text", {}), ask_order=None)
+        actions = recording_actions(bot_actions, observed)
         result = await run_agent(task.text, build_tools(actions, user_message=task.text), AGENT_SYSTEM_PROMPT)
         observed.tools = [call.name for call in result.tool_calls]
         observed.reply = result.reply

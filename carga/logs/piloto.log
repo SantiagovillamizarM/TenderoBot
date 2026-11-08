@@ -1,0 +1,52 @@
+2026-11-07 20:47:40,727 INFO __main__: Corrida «piloto»: 50 unidades, una cada 10.0 s, modelo grok-4.20-0309-non-reasoning. Bitácora de texto en carga\logs\piloto.log
+2026-11-07 20:47:48,472 INFO carga: U00001 exito   conversacion | buenos días 
+2026-11-07 20:47:55,984 INFO carga: U00002 exito   venta | se fueron tres lavaloza 
+2026-11-07 20:48:05,202 INFO carga: U00003 exito   venta_dificil | vendí una docena de huevos sueltos 
+2026-11-07 20:48:20,867 INFO carga: U00004 exito   venta | se fueron 1 alpina y 6 Arroz Diana 500 g 
+2026-11-07 20:48:29,143 INFO carga: U00005 fallo   venta | se fueron dos aceite litro ventas: esperaba {'i11': 2}, quedó {'i12': 2}
+2026-11-07 20:48:38,684 INFO carga: U00006 exito   consulta | cuánto vale Blanqueador 1 litro? 
+2026-11-07 20:48:48,541 INFO carga: U00007 exito   conversacion | gracias 
+2026-11-07 20:48:58,667 INFO carga: U00008 exito   conversacion | cómo está el clima hoy? 
+2026-11-07 20:49:09,077 INFO carga: U00009 fallo   venta_dificil | se fue leche litro ventas: esperaba ninguna, quedó {'i16': 1}
+2026-11-07 20:49:23,587 INFO carga: U00010 exito   venta | se vendieron 6 chupetas y 10 fideo 
+2026-11-07 20:49:42,655 INFO carga: U00011 exito   pedido | arma el pedido de esta semana 
+2026-11-07 20:49:44,840 INFO carga: U00012 exito   pedido | que sean 2 cajas de arroz kilo 
+2026-11-07 20:49:59,491 INFO carga: U00013 exito   pedido | quita Leche Alpina 1 litro 
+2026-11-07 20:50:05,907 INFO carga: U00014 exito   consulta | a cómo está axion? 
+2026-11-07 20:50:17,346 INFO carga: U00015 exito   venta | vendí doce bubalu, 2 coca 400 y 1 arroz 
+2026-11-07 20:50:29,626 INFO carga: U00016 exito   venta | vendí 1 postobon 
+2026-11-07 20:50:36,687 INFO carga: U00017 exito   conversacion | ok perfecto 
+2026-11-07 20:50:46,854 INFO carga: U00018 exito   venta | vendí 2 axiones 
+2026-11-07 20:52:01,796 INFO __main__: Corrida «piloto»: 50 unidades, una cada 6.0 s, modelo grok-4.20-0309-non-reasoning. Bitácora de texto en carga\logs\piloto.log
+2026-11-07 20:52:11,918 INFO carga: U00019 exito   venta | 4 cocas litro 
+2026-11-07 20:52:14,652 INFO carga: U00020 fallo   venta | hoy vendí 1 Jabón Rey x 3, 12 Jet chocolate y 1 jabon de loz ventas: esperaba {'i25': 1, 'i20': 12, 'i24': 1}, quedó {'i25': 3, 'i20': 12, 'i24': 1}
+2026-11-07 20:52:27,515 INFO carga: U00021 exito   venta | se fueron cuatro alquerías y 12 Leches Alpina 1 litro 
+2026-11-07 20:52:32,180 INFO carga: U00022 exito   venta | vendí 1 malta pony 
+2026-11-07 20:52:45,600 INFO carga: U00023 exito   venta | vendí 1 gaseosa postobon y 3 arroz diana 
+2026-11-07 20:52:50,272 INFO carga: U00024 fallo   venta | salieron un lavaloza, dos postobon y 6 Agua Brisa 600 ml ventas: esperaba {'i24': 1, 'i3': 2, 'i8': 6}, quedó {'i24': 1, 'i3': 2}
+2026-11-07 20:52:56,339 INFO carga: U00025 exito   consulta | qué es lo que no se está vendiendo? 
+2026-11-07 20:53:00,693 INFO carga: U00026 exito   venta | me compraron 10 coca personal, seis Pasta Doria 250 g y 1 cu 
+2026-11-07 20:53:08,199 INFO carga: U00027 exito   venta | salieron 1 cubeta de huevos, 1 Colombiana 400 ml, seis arroz 
+2026-11-07 20:53:12,886 INFO carga: U00028 exito   venta | hoy vendí seis manuelitas y un fab 
+2026-11-07 20:53:19,004 INFO carga: U00029 exito   venta_dificil | vendí fab 
+2026-11-07 20:53:24,936 INFO carga: U00030 fallo   venta_dificil | me compraron Axion 400 g ventas: esperaba ninguna, quedó {'i24': 1}
+2026-11-07 20:53:32,632 INFO carga: U00031 exito   venta | se fueron cuatro Manzana Postobón 400 ml y 5 límpidos 
+2026-11-07 20:53:39,525 INFO carga: U00032 exito   venta | despaché 12 Bones Bon Bum,cuatro Fab polvo 500 g,5 atun y un 
+2026-11-07 20:53:51,804 INFO carga: U00033 exito   venta | despaché tres Leche Alpina 1 litro 
+2026-11-07 20:54:35,090 INFO carga: U00034 exito   venta | salieron diez detergentes 
+2026-11-07 20:54:42,191 INFO carga: U00035 exito   pedido | hazme el pedido 
+2026-11-07 20:54:45,323 INFO carga: U00036 exito   pedido | que sean tres cajas de leche 
+2026-11-07 20:54:53,161 INFO carga: U00037 exito   pedido | que sean 2 cajas de cafe 
+2026-11-07 20:54:59,770 INFO carga: U00038 exito   consulta | qué es lo que no se está vendiendo? 
+2026-11-07 20:55:04,658 INFO carga: U00039 exito   conversacion | buenos días 
+2026-11-07 20:55:13,280 INFO carga: U00040 exito   consulta | cuántos café tengo? 
+2026-11-07 20:55:20,161 INFO carga: U00041 exito   venta | salieron 10 lata de atun,un coca cola litro,12 gourmet y un  
+2026-11-07 20:55:26,881 INFO carga: U00042 exito   venta | 5 gaseosas manzana, 2 cocas litro y 6 jet 
+2026-11-07 20:55:30,581 INFO carga: U00043 fallo   venta | se fueron 12 pan tajado,cinco cocas cola litro y seis Postob ventas: esperaba {'i15': 12, 'i1': 5, 'i3': 6}, quedó {'i15': 12, 'i1': 5}
+2026-11-07 20:55:35,663 INFO carga: U00044 exito   conversacion | hola buenas 
+2026-11-07 20:55:43,659 INFO carga: U00045 exito   venta | me compraron 2 cafes aguila y 2 Pan tajado 
+2026-11-07 20:55:48,659 INFO carga: U00046 exito   venta | se fueron 10 bubalu y dos Azúcar Manuelita 1 kg 
+2026-11-07 20:55:56,027 INFO carga: U00047 exito   venta | hoy vendí 6 Aguas Brisa 600 ml 
+2026-11-07 20:56:00,866 INFO carga: U00048 exito   venta_dificil | vendí 3 velas 
+2026-11-07 20:56:09,172 INFO carga: U00049 exito   venta | salieron 2 panes de caja y 2 Aceite Premier 3 litros 
+2026-11-07 20:56:20,390 INFO carga: U00050 exito   venta | se fueron 2 alquerías 

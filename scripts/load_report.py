@@ -126,6 +126,15 @@ def summary_markdown(summary: dict, trm: float) -> str:
         f"{_num(summary['mayor_hueco_senales_min'], 1)} min. Freno por errores de pasarela: "
         f"{summary['freno_activado']} veces."
     )
+    starts, abrupt = summary.get("arranques", 0), summary.get("cortes_bruscos", 0)
+    if starts > 1:
+        lines.append(
+            f"Arranques: {starts} (la corrida se retomó {starts - 1} veces con el mismo comando; "
+            f"{abrupt} de ellas tras un corte brusco, sin cierre ordenado). Ninguna unidad se repitió ni se perdió: "
+            "las que quedaban a medias volvieron a la cola y su intento quedó contado."
+        )
+    else:
+        lines.append("Arranques: 1 (corrida de un solo tirón, sin reinicios).")
     if summary["huecos"]:
         lines.append("")
         lines.append("Cortes (tiempo largo sin terminar unidades):")

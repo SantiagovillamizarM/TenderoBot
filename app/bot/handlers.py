@@ -830,7 +830,8 @@ def products_as_catalog(products: list[Product]) -> list[dict]:
         {
             "sku": keys[product.id],
             "name": product.name,
-            "aliases": product.aliases,
+            # Con varios proveedores, también los nombres y alias de los otros (app.store_catalog.item_products).
+            "aliases": getattr(product, "search_aliases", None) or product.aliases,
             "presentation": product.presentation,
         }
         for product in products

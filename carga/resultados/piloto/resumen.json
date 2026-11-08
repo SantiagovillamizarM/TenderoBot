@@ -1,0 +1,190 @@
+{
+  "corrida": "piloto",
+  "estado": "terminada",
+  "inicio": "2026-11-08T02:47:42.319100+00:00",
+  "fin": "2026-11-08T02:56:19.796276+00:00",
+  "horas": 0.14,
+  "total_unidades": 50,
+  "pendientes": 0,
+  "unidades_por_hora": 347.8,
+  "origen": {
+    "generado": 50
+  },
+  "total": {
+    "unidades": 50,
+    "exito": 44,
+    "fallo": 6,
+    "error": 0,
+    "tasa_exito": 0.88,
+    "llamadas": 94,
+    "tokens_entrada": 215528,
+    "tokens_cache": 171264,
+    "tokens_salida": 3454,
+    "porcentaje_cache": 0.7946252923054081,
+    "costo_usd": 0.0982178,
+    "costo_por_unidad_usd": 0.001964356,
+    "costo_por_exito_usd": 0.002232222727272727,
+    "reintentos": 0,
+    "segundos_p50": 2.742,
+    "segundos_p95": 7.886
+  },
+  "por_tipo": {
+    "consulta": {
+      "unidades": 5,
+      "exito": 5,
+      "fallo": 0,
+      "error": 0,
+      "tasa_exito": 1.0,
+      "llamadas": 10,
+      "tokens_entrada": 24428,
+      "tokens_cache": 19712,
+      "tokens_salida": 329,
+      "porcentaje_cache": 0.8069428524643851,
+      "costo_usd": 0.0106599,
+      "costo_por_unidad_usd": 0.00213198,
+      "costo_por_exito_usd": 0.00213198,
+      "reintentos": 0,
+      "segundos_p50": 3.998,
+      "segundos_p95": 4.558
+    },
+    "conversacion": {
+      "unidades": 6,
+      "exito": 6,
+      "fallo": 0,
+      "error": 0,
+      "tasa_exito": 1.0,
+      "llamadas": 6,
+      "tokens_entrada": 13183,
+      "tokens_cache": 8960,
+      "tokens_salida": 167,
+      "porcentaje_cache": 0.6796632026094213,
+      "costo_usd": 0.00748825,
+      "costo_por_unidad_usd": 0.0012480416666666666,
+      "costo_por_exito_usd": 0.0012480416666666666,
+      "reintentos": 0,
+      "segundos_p50": 1.918,
+      "segundos_p95": 6.228
+    },
+    "pedido": {
+      "unidades": 6,
+      "exito": 6,
+      "fallo": 0,
+      "error": 0,
+      "tasa_exito": 1.0,
+      "llamadas": 12,
+      "tokens_entrada": 27528,
+      "tokens_cache": 22784,
+      "tokens_salida": 328,
+      "porcentaje_cache": 0.8276663760534728,
+      "costo_usd": 0.0113068,
+      "costo_por_unidad_usd": 0.0018844666666666668,
+      "costo_por_exito_usd": 0.0018844666666666668,
+      "reintentos": 0,
+      "segundos_p50": 3.302,
+      "segundos_p95": 12.304
+    },
+    "venta": {
+      "unidades": 28,
+      "exito": 24,
+      "fallo": 4,
+      "error": 0,
+      "tasa_exito": 0.8571428571428571,
+      "llamadas": 56,
+      "tokens_entrada": 127733,
+      "tokens_cache": 98048,
+      "tokens_salida": 2351,
+      "porcentaje_cache": 0.7676011680615032,
+      "costo_usd": 0.06259335,
+      "costo_por_unidad_usd": 0.002235476785714286,
+      "costo_por_exito_usd": 0.0026080562500000004,
+      "reintentos": 0,
+      "segundos_p50": 2.916,
+      "segundos_p95": 7.886
+    },
+    "venta_dificil": {
+      "unidades": 5,
+      "exito": 3,
+      "fallo": 2,
+      "error": 0,
+      "tasa_exito": 0.6,
+      "llamadas": 10,
+      "tokens_entrada": 22656,
+      "tokens_cache": 21760,
+      "tokens_salida": 279,
+      "porcentaje_cache": 0.96045197740113,
+      "costo_usd": 0.0061695,
+      "costo_por_unidad_usd": 0.0012339,
+      "costo_por_exito_usd": 0.0020564999999999997,
+      "reintentos": 0,
+      "segundos_p50": 2.117,
+      "segundos_p95": 2.63
+    }
+  },
+  "categorias": {
+    "ventas_incorrectas": 6
+  },
+  "ejemplos": {
+    "ventas_incorrectas": [
+      {
+        "unidad": "U00005",
+        "texto": "se fueron dos aceite litro",
+        "detalle": "faltó ACE-GOUR-1L, sobró ACE-PREM-3L",
+        "respuesta": "Revisa el resumen de las 2 Aceite Premier 3 litros y pulsa ✅ Confirmar. ¿Algo más?"
+      },
+      {
+        "unidad": "U00009",
+        "texto": "se fue leche litro",
+        "detalle": "sobró LEC-ALQU-1L",
+        "respuesta": "Revisa el resumen de la venta de 1 Leche Alquería litro y confirma."
+      },
+      {
+        "unidad": "U00020",
+        "texto": "hoy vendí 1 Jabón Rey x 3, 12 Jet chocolate y 1 jabon de loza",
+        "detalle": "ASE-JABO-3 1→3",
+        "respuesta": "Revisa el resumen de ventas (3 Jabón Rey, 12 Jet y 1 Axion) y pulsa ✅ Confirmar. ¿Algo más?"
+      },
+      {
+        "unidad": "U00024",
+        "texto": "salieron un lavaloza, dos postobon y 6 Agua Brisa 600 ml",
+        "detalle": "faltó AGU-BRIS-600",
+        "respuesta": "Revisa el resumen: vendiste 1 Axion 400g y 2 Postobón 1.5L. El Agua Brisa 600ml no se reconoció (parece Agua Brisa o Cristal). Confirma o dime cuál es."
+      },
+      {
+        "unidad": "U00030",
+        "texto": "me compraron Axion 400 g",
+        "detalle": "sobró ASE-AXIO-400",
+        "respuesta": "Revisa el resumen de la venta de Axion 400 g y confirma."
+      }
+    ]
+  },
+  "errores_por_tipo": {},
+  "huecos": [],
+  "senales_de_vida": 3,
+  "mayor_hueco_senales_min": 4.4,
+  "freno_activado": 0,
+  "arranques": 2,
+  "cortes_bruscos": 1,
+  "ventas_confirmadas": 24,
+  "por_hora": [
+    {
+      "hora": 0,
+      "desde_colombia": "2026-11-07 21:47",
+      "unidades": 50,
+      "exito": 44,
+      "fallo": 6,
+      "error": 0,
+      "tasa_exito": 0.88,
+      "llamadas": 94,
+      "tokens_entrada": 215528,
+      "tokens_cache": 171264,
+      "tokens_salida": 3454,
+      "porcentaje_cache": 0.7946252923054081,
+      "costo_usd": 0.0982178,
+      "costo_por_unidad_usd": 0.001964356,
+      "costo_por_exito_usd": 0.002232222727272727,
+      "reintentos": 0,
+      "segundos_p50": 2.742,
+      "segundos_p95": 7.886
+    }
+  ]
+}

@@ -51,9 +51,29 @@ async def load_items(session: AsyncSession, store: Store) -> list[Item]:
     return group_offers([Offer(product, product.distributor_id, name) for product, name in rows], chosen)
 
 
+def item_products(items: list[Item]) -> list[Product]:
+    """Un producto por artículo (el del proveedor preferido), que también se encuentra por los nombres y
+    alias de los otros proveedores de ese artículo.
+
+    Sin esto, si el preferido es "Gaseosa Postobón 1.5 L", el tendero que dice "Postobón 1.5 litros"
+    (como lo llama otro proveedor) no encuentra el producto. Los alias extra van en un atributo que no
+    se guarda en la base (search_aliases).
+    """
+    products = []
+    for item in items:
+        product = item.preferred.product
+        terms = [product.aliases or ""]
+        for offer in item.offers:
+            if offer.product is not product:
+                terms += [offer.product.name or "", offer.product.aliases or ""]
+        product.search_aliases = ",".join(term for term in terms if term)
+        products.append(product)
+    return products
+
+
 async def store_products(session: AsyncSession, store: Store) -> list[Product]:
     """Un producto por artículo: el del proveedor preferido."""
-    return [item.preferred.product for item in await load_items(session, store)]
+    return item_products(await load_items(session, store))
 
 
 async def choose(session: AsyncSession, store: Store, items: list[Item], product_id: int) -> Item:

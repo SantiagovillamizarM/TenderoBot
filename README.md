@@ -170,6 +170,8 @@ python -m scripts.load_report     --corrida grande                # bitácora co
 
 `crear` hace que cada tienda "cuente" su estante antes de empezar (300 unidades por producto, `--conteo-inicial`), para que las ventas de 12 horas no dejen el inventario en negativo.
 
+En el bot, "hazme el pedido" pregunta con botones (✍️ Armarlo yo / 📋 Ver pedido sugerido). En la carga nadie toca botones: el tendero simulado escoge el pedido sugerido y sus cambios ("quita el arroz") caen sobre ese borrador.
+
 La bitácora queda en `carga/resultados/<corrida>/`:
 
 - `resumen.md` y `resumen.json`: resultado general y por tipo de mensaje, consumo (llamadas, tokens, % en caché, costo total, por unidad y por unidad resuelta, en USD y pesos), latencia, fallos clasificados con ejemplos, continuidad (cortes de 10 minutos o más y el mayor hueco entre señales de vida) y una fila por hora.
@@ -181,7 +183,9 @@ La bitácora queda en `carga/resultados/<corrida>/`:
 
 - **Listo:** la unidad de trabajo, el generador (1.500 mensajes en [carga/unidades.jsonl](carga/unidades.jsonl) y un piloto de 50 con todos los tipos en [carga/piloto.jsonl](carga/piloto.jsonl)), la base aparte, el trabajador y la bitácora.
 - **Probado contra Grok:** una corrida de 7 mensajes, uno de cada tipo, con 7 de 7 bien a US$0,0015 por mensaje. Se revisó en la base que la venta quedó confirmada, que no quedaron resúmenes abiertos, que cada llamada quedó en la bitácora y que hubo señales de vida.
-- **Falta:** la prueba piloto de 50 mensajes en unos 30 minutos, la prueba de recuperación (matar el programa a la mitad y comprobar que sigue sin repetir) y la corrida de 12 horas.
+- **Piloto de 50 mensajes (7 de noviembre):** primera corrida 44 de 50 (88%). Los 6 fallos llevaron a 4 arreglos: el texto exacto del tendero ("aceite litro") manda sobre el código que propone Grok; la cantidad citada tiene que ser un número ("litro" no lo es); el tamaño del producto ("Axion 400 g", "Jabón Rey x 3") no cuenta como cantidad; y con varios proveedores el agente encuentra el producto también por los nombres de los otros proveedores ("Postobón 1.5 litros"). Segunda corrida con los mismos 50: **49 de 50 (98%)**, US$0,00144 por mensaje. Sigue fallando «1 Jabón Rey x 3»: Grok toma el 3 como cantidad; ahora el bot no lo registra y pregunta, pero el caso cuenta como fallo.
+- **Prueba de recuperación:** en el primer piloto se mató el proceso a la fuerza con 18 de 50 hechos. Con el mismo comando siguió en la unidad 19, sin repetir ni perder ninguna. La bitácora lo dice: "Arranques: 2 … 1 de ellas tras un corte brusco".
+- **Falta:** la corrida de 12 horas.
 - **Costo estimado:** con ~US$0,0015 por mensaje, 1.500 mensajes cuestan unos US$2,30.
 - **Los mensajes son generados:** se marcan `generado`; los mensajes reales de tenderos entran con `origen: real` y la bitácora los cuenta aparte.
 

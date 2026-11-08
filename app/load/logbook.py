@@ -141,6 +141,25 @@ def hourly(rows: list[dict], start: datetime) -> list[dict]:
     return result
 
 
+def restarts(heartbeats: list[dict]) -> tuple[int, int]:
+    """(arranques, cortes bruscos). Cada `correr` deja una señal "inicio" y, si cierra bien, una "fin: ...".
+    Un "inicio" sin "fin" antes es un corte brusco (se apagó el equipo, se mató el proceso): se cuenta
+    aparte para no esconderlo."""
+    ordered = sorted(heartbeats, key=lambda h: h["at"])
+    starts = 0
+    abrupt = 0
+    last_note = None
+    for beat in ordered:
+        note = beat.get("note") or ""
+        if note == "inicio":
+            starts += 1
+            if starts > 1 and not (last_note or "").startswith("fin"):
+                abrupt += 1
+        if note:
+            last_note = note
+    return starts, abrupt
+
+
 def summarize(rows: list[dict], run: dict, heartbeats: list[dict]) -> dict:
     """Resumen de la corrida: volumen, éxito, consumo, errores, continuidad y por hora."""
     done = [r for r in rows if r.get("status") in DONE]
@@ -164,6 +183,7 @@ def summarize(rows: list[dict], run: dict, heartbeats: list[dict]) -> dict:
             })
     beats = sorted(h["at"] for h in heartbeats)
     beat_gap = max(((b - a).total_seconds() / 60 for a, b in zip(beats, beats[1:])), default=0.0)
+    starts, abrupt = restarts(heartbeats)
 
     return {
         "corrida": run.get("name"),
@@ -185,6 +205,8 @@ def summarize(rows: list[dict], run: dict, heartbeats: list[dict]) -> dict:
         "senales_de_vida": len(heartbeats),
         "mayor_hueco_senales_min": round(beat_gap, 1),
         "freno_activado": sum("freno" in (h.get("note") or "") for h in heartbeats),
+        "arranques": starts,
+        "cortes_bruscos": abrupt,
         "ventas_confirmadas": sum(bool(r.get("confirmed")) for r in rows),
         "por_hora": hourly(rows, started) if started else [],
     }

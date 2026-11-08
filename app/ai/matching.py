@@ -104,9 +104,26 @@ def search_products(query: str, products: list[dict], limit: int = 3) -> list[di
     return [product for _score, product in scored[:limit]]
 
 
+def exact_term_match(query_text: str, products: list[dict]) -> dict | None:
+    """El producto cuyo nombre o alias es exactamente lo que escribió el tendero (sin mayúsculas ni plural)."""
+    wanted = {variant.casefold().strip() for variant in query_variants((query_text or "").strip())} - {""}
+    if not wanted:
+        return None
+    found = [
+        product for product in products
+        if any(term.casefold().strip() in wanted for term in product_terms(product))
+    ]
+    return found[0] if len(found) == 1 else None
+
+
 def resolve_sku(sku: str | None, query_text: str, products: list[dict]) -> str | None:
     by_sku = catalog_by_sku(products)
     cleaned_sku = (sku or "").strip()
+    # Si lo que dijo el tendero es justo el nombre o un alias de un producto, manda eso sobre el sku que
+    # propone el modelo ("aceite litro" es Aceite Gourmet 1 litro aunque Grok mande el de 3 litros).
+    exact = exact_term_match(query_text, products)
+    if exact is not None:
+        return str(exact["sku"])
     if cleaned_sku:
         found = by_sku.get(cleaned_sku.casefold())
         if found is not None:

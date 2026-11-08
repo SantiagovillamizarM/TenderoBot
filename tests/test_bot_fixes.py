@@ -251,6 +251,79 @@ async def test_order_tool_passes_the_named_provider():
     actions.suggest_order.assert_not_called()
 
 
+# --- Fallos del piloto de carga ------------------------------------------------------------
+
+
+def test_exact_alias_wins_over_the_model_sku():
+    from app.ai.matching import resolve_sku
+
+    gourmet = {"sku": "ACE-GOUR-1L", "name": "Aceite Gourmet 1 litro", "aliases": "aceite,gourmet,aceite litro"}
+    premier = {"sku": "ACE-PREM-3L", "name": "Aceite Premier 3 litros", "aliases": "aceite grande,premier"}
+    assert resolve_sku("ACE-PREM-3L", "aceite litro", [gourmet, premier]) == "ACE-GOUR-1L"
+    # Si el texto no es un nombre exacto, se sigue usando el sku del modelo.
+    assert resolve_sku("ACE-PREM-3L", "el aceitico ese", [gourmet, premier]) == "ACE-PREM-3L"
+
+
+@pytest.mark.asyncio
+async def test_quantity_quote_must_be_a_number():
+    tools, actions = make_tools("se fue leche litro", catalog=[COCA, PAPEL])
+    result = await tools["registrar_ventas"].run(
+        {"ventas": [{"producto": "coca litro", "cantidad": 1, "texto_cantidad": "litro"}]}
+    )
+    assert result["reconocidas"] == [] and result["preguntar"][0]["motivo"] == "No dijo cuántas vendió"
+    from app.ai.tools import is_quantity
+
+    for said in ("2", "una", "media docena", "tres", "veintidós", "dieciocho", "treinta y dos", "ciento veinte"):
+        assert is_quantity(said)
+    for said in ("litro", "leche", "grande"):
+        assert not is_quantity(said)
+
+
+def test_size_numbers_are_not_quantities():
+    from app.ai.tools import quote_is_only_a_size
+
+    assert quote_is_only_a_size("400", "me compraron Axion 400 g")
+    assert quote_is_only_a_size("3", "hoy vendí 1 Jabón Rey x 3 y 12 Jet")
+    assert not quote_is_only_a_size("1", "hoy vendí 1 Jabón Rey x 3 y 12 Jet")
+    assert not quote_is_only_a_size("6", "6 Agua Brisa 600 ml")
+    assert not quote_is_only_a_size("2", "2 pony malta 330 ml")
+    assert not quote_is_only_a_size("dos", "dos aceites")
+
+
+def test_other_suppliers_names_find_the_preferred_product():
+    from types import SimpleNamespace as NS
+
+    from app.ai.matching import resolve_sku
+    from app.store_catalog import item_products
+
+    barrio = NS(id=1, sku="GAS-POST-1.5", name="Postobón 1.5 litros", aliases="postobon", presentation="1.5 L")
+    postobon = NS(id=2, sku="POS-POST-15", name="Gaseosa Postobón 1.5 L", aliases="", presentation="1.5 L")
+    item = NS(preferred=NS(product=postobon), offers=[NS(product=barrio), NS(product=postobon)])
+    (product,) = item_products([item])
+    assert product is postobon
+    catalog = handlers.products_as_catalog([product])
+    assert resolve_sku(None, "Postobón 1.5 litros", catalog) == catalog[0]["sku"]
+
+
+def test_logbook_counts_restarts_and_abrupt_cuts():
+    from datetime import UTC, datetime, timedelta
+
+    from app.load.logbook import restarts
+
+    t = datetime(2026, 11, 8, tzinfo=UTC)
+    beats = [
+        {"at": t, "note": "inicio"},
+        {"at": t + timedelta(minutes=5), "note": None},
+        # se mató el proceso: no hubo "fin"
+        {"at": t + timedelta(minutes=9), "note": "inicio"},
+        {"at": t + timedelta(minutes=20), "note": "fin: interrumpida"},
+        {"at": t + timedelta(minutes=30), "note": "inicio"},
+        {"at": t + timedelta(minutes=40), "note": "fin: terminada"},
+    ]
+    assert restarts(beats) == (3, 1)
+    assert restarts(beats[:2]) == (1, 0)
+
+
 # --- Textos ------------------------------------------------------------------------------
 
 
